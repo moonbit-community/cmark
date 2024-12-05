@@ -39,7 +39,7 @@ pub(all) enum LineType {
   SetextUnderlineLine(HeadingLevel, Last)
   ThematicBreakLine(Last)
   ExtTableRow(Last)
-  ExtFootnoteLabel(RevSpans, Last, String)
+  ExtFootnoteLabel(@immut/list.T[Span], Last, String)
   Nomatch
 } derive(Show, ToJson, Eq)
 
@@ -546,7 +546,7 @@ pub fn LineType::ext_footnote_label(
   }
   // Get the normalized label
   let line = { pos: line_pos, first: start, last }
-  guard let Some((_, _, rev_spans, _, key)) = link_label(
+  guard let Some((_, _, spans, _, key)) = link_label(
     buf,
     next_line=fn(_x) { None },
     s,
@@ -556,6 +556,8 @@ pub fn LineType::ext_footnote_label(
   ) else {
     _ => Nomatch
   }
+  // TODO: Replace this with arrays.
+  let rev_spans = @immut/list.from_array(spans.rev())
   ExtFootnoteLabel(rev_spans, colon, key)
 }
 
