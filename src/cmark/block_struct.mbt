@@ -834,8 +834,10 @@ fn Parser::add_open_blocks_with_line_class(
     HtmlBlockLine(end_cond) => bs.add(self.html_block(end_cond~, indent_start~))
     ParagraphLine => bs.add(self.paragraph(start=indent_start))
     ExtTableRow(last) => bs.add(self.table(indent~, last~))
-    ExtFootnoteLabel(rev_spans, last, key) =>
+    ExtFootnoteLabel(spans, last, key) => { // TODO: Replace this with arrays.
+      let rev_spans = List::from_array(spans.rev())
       bs.add(self.footnote(indent~, last~, rev_spans~, key~))
+    }
     _ => abort("unimplemented")
   }
 }

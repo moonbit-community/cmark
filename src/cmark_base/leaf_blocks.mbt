@@ -39,7 +39,7 @@ pub(all) enum LineType {
   SetextUnderlineLine(HeadingLevel, Last)
   ThematicBreakLine(Last)
   ExtTableRow(Last)
-  ExtFootnoteLabel(@immut/list.T[Span], Last, String)
+  ExtFootnoteLabel(Array[Span], Last, String)
   Nomatch
 } derive(Show, ToJson, Eq)
 
@@ -556,9 +556,7 @@ pub fn LineType::ext_footnote_label(
   ) else {
     _ => Nomatch
   }
-  // TODO: Replace this with arrays.
-  let rev_spans = @immut/list.from_array(spans.rev())
-  ExtFootnoteLabel(rev_spans, colon, key)
+  ExtFootnoteLabel(spans, colon, key)
 }
 
 // https://spec.commonmark.org/current/#link-reference-definition
