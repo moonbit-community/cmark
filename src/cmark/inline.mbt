@@ -8,7 +8,7 @@ pub(all) enum Inline {
   CodeSpan(Node[InlineCodeSpan])
   Emphasis(Node[InlineEmphasis])
   Image(Node[InlineLink])
-  Inlines(Node[List[Inline]])
+  Inlines(Node[Array[Inline]])
   Link(Node[InlineLink])
   RawHtml(Node[InlineRawHtml])
   StrongEmphasis(Node[InlineEmphasis])
@@ -19,7 +19,7 @@ pub(all) enum Inline {
 
 ///|
 pub fn Inline::empty() -> Inline {
-  Inlines({ v: Nil, meta: Meta::none() })
+  Inlines({ v: [], meta: Meta::none() })
 }
 
 ///|
@@ -69,7 +69,7 @@ pub fn Inline::normalize(self : Inline) -> Inline {
     | CodeSpan(_)
     | RawHtml(_)
     | Text(_)
-    | Inlines({ v: Nil, .. })
+    | Inlines({ v: [], .. })
     | ExtMathSpan(_) as i => i
     Image({ v: raw, meta }) =>
       Image({ v: { ..raw, text: raw.text.normalize() }, meta })
@@ -81,26 +81,30 @@ pub fn Inline::normalize(self : Inline) -> Inline {
       StrongEmphasis({ v: { ..raw, inline: raw.inline.normalize() }, meta })
     ExtStrikethrough({ v: raw, meta }) =>
       ExtStrikethrough({ v: raw._.normalize(), meta })
-    Inlines({ v: Cons(i, Nil), .. }) => i
-    Inlines({ v: Cons(i, is_), meta }) => {
-      let is_ = loop List::of([i.normalize()]), is_ {
-        acc, Cons(Inlines({ v: is1, .. }), is_) =>
-          continue acc, is1.rev().rev_concat(is_)
-        acc, Cons(Text({ v: t1, meta: meta1 }) as i1, is_) =>
-          match acc {
-            Cons(Text({ v: t, meta }), acc) => {
-              let i = Text(
-                { v: t + t1, meta: { ..meta, loc: meta.loc.span(meta1.loc) } },
-              )
-              continue acc.add(i), is_
+    Inlines({ v: [i], .. }) => i
+    Inlines({ v: [i, .. as is_], meta }) => {
+      let acc = [i.normalize()]
+      let is_ = Array::from_iter(is_.iter())
+      while true {
+        guard let Some(curr) = is_.pop() else { _ => break }
+        match curr {
+          Inlines({ v: is1, .. }) =>
+            for i1 in is1.rev() {
+              is_.push(i1)
             }
-            _ => continue acc.add(i1.normalize()), is_
-          }
-        acc, Cons(i, is_) => continue acc.add(i.normalize()), is_
-        acc, Nil => break acc.rev()
+          Text({ v: t1, meta: meta1 }) as i1 =>
+            match acc {
+              [.., Text({ v: t, meta })] =>
+                acc[acc.length() - 1] = Text(
+                  { v: t + t1, meta: { ..meta, loc: meta.loc.span(meta1.loc) } },
+                )
+              _ => acc.push(i1.normalize())
+            }
+          i => acc.push(i.normalize())
+        }
       }
-      match is_ {
-        Cons(i, Nil) => i
+      match acc {
+        [i] => i
         is_ => Inlines({ v: is_, meta })
       }
     }
