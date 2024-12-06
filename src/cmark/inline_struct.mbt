@@ -792,7 +792,7 @@ fn Parser::try_full_reflink_remainder(
 /// If the function returns `Some(Some(_))`, it means the `rev_toks` stack has been modified.
 fn Parser::try_shortcut_reflink(
   self : Parser,
-  rev_toks : Ref[Array[Token]],
+  rev_toks : Ref[RevTokens],
   line : LineSpan,
   image~ : Bool,
   start~ : BytePos
@@ -818,19 +818,20 @@ fn Parser::try_shortcut_reflink(
 }
 
 ///| https://spec.commonmark.org/current/#collapsed-reference-link
+/// If the function returns `Some()`, it means the `rev_toks` stack has been modified.
 fn Parser::try_collapsed_reflink(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[RevTokens],
   line : LineSpan,
   image~ : Bool,
   start~ : BytePos
-) -> (List[Token], LineSpan, ReferenceKind, BytePos)? {
+) -> (LineSpan, ReferenceKind, BytePos)? {
   let start = start + image.to_int() // [
-  guard let Some((toks, line, spans, last, key)) = @cmark_base.link_label(
+  guard let Some((rev_toks_, line, spans, last, key)) = @cmark_base.link_label(
     self.buf,
     next_line=tokens_next_line,
     self.i,
-    toks,
+    rev_toks.val[:],
     line~,
     start~,
   ) else {
@@ -840,31 +841,32 @@ fn Parser::try_collapsed_reflink(
   let rev_spans = List::from_array(spans.rev())
   let ref_ = self.label_of_rev_spans(key~, rev_spans)
   let last = last + 2 // ][]
-  let toks = tokens_drop_stop_after_right_brack(toks)
-  let toks = tokens_drop_stop_after_right_brack(toks)
-  self
-  .find_def_for_ref(image~, ref_)
-  .map(fn(def) { (toks, line, ReferenceKind::Ref(Collapsed, ref_, def), last) })
+  guard let Some(def) = self.find_def_for_ref(image~, ref_) else { _ => None }
+  rev_toks.val = rev_toks_.iter().to_array() // TODO: Maybe truncating is enough?
+  tokens_drop_stop_after_right_brack(rev_toks.val)
+  tokens_drop_stop_after_right_brack(rev_toks.val)
+  Some((line, ReferenceKind::Ref(Collapsed, ref_, def), last))
 }
 
 ///| https://spec.commonmark.org/current/#inline-link
+/// If the function returns `Some(_)`, it means the `rev_toks` stack has been modified.
 fn Parser::try_inline_link_remainder(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[RevTokens],
   start_line : LineSpan,
   image~ : Bool,
   start~ : BytePos
-) -> (List[Token], LineSpan, ReferenceKind, BytePos)? {
+) -> (LineSpan, ReferenceKind, BytePos)? {
   let _ = image
   let st = start
-  guard self.cidx.has_right_paren(after=st) else { return None }
+  guard self.cidx.has_right_paren(after=st) else { None }
   guard let Some((toks, line, before_dest, start)) = self.first_non_blank_over_nl(
     next_line=tokens_next_line,
-    toks,
+    rev_toks.val[:],
     start_line,
     start=st + 1,
   ) else {
-    _ => return None
+    _ => None
   }
   let (toks, line, angled_dest, dest, start) = match
     @cmark_base.link_destination(self.i, last=line.last, start~) {
@@ -901,7 +903,7 @@ fn Parser::try_inline_link_remainder(
         }
       }
   }
-  let (toks, line, after_title, last) = self
+  let (rev_toks_, line, after_title, last) = self
     .first_non_blank_over_nl(next_line=tokens_next_line, toks, line, start~)
     .or((toks, line, List::Nil, start))
   if last > line.last || self.i[last] != ')' {
@@ -925,57 +927,62 @@ fn Parser::try_inline_link_remainder(
     last_line=line,
   )
   let ld = { v: ld, meta: self.meta(textloc) }
-  let toks = tokens_pop_until(start=last + 1, toks)
-  Some((toks, line, Inline(ld), last))
+  rev_toks.val = rev_toks_.iter().to_array() // TODO: Maybe truncating is enough?
+  tokens_pop_until(start=last + 1, rev_toks.val)
+  Some((line, Inline(ld), last))
 }
 
 // https://spec.commonmark.org/current/#link-text
 ///|
 fn Parser::find_link_text_tokens(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[RevTokens],
   start_line : LineSpan,
   start~ : BytePos
-) -> (List[Token], LineSpan, List[Token], BytePos)? {
+) -> (LineSpan, Array[Token], BytePos)? {
   let _ = start
-  loop toks, start_line, 0, List::Nil {
-    Cons(RightBrack({ start: last, .. }), toks), line, 0, acc => {
-      tokens_shorten_last_line(to_last=last - 1, acc)
-      Some((toks, line, acc, last))
-    }
-    Cons(Backticks({ start, count, escaped }), toks), line, nest, acc =>
-      match self.try_code(toks, line, start~, count~, escaped~) {
-        None => continue toks, line, nest, acc
-        Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
-      }
-    Cons(MathSpanMarks({ start, count, may_open, .. }), toks),
-    line,
-    nest,
-    acc => {
-      if may_open.not() {
-        continue toks, line, nest, acc
-      }
-      match self.try_math_span(toks, line, start~, count~) {
-        None => continue toks, line, nest, acc
-        Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
-      }
-    }
-    Cons(AutolinkOrHtmlStart({ start }), toks), line, nest, acc =>
-      match self.try_autolink_or_html(toks, line, start~) {
-        None => continue toks, line, nest, acc
-        Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
-      }
-    Cons(RightBrack(_) as t, toks), line, nest, acc =>
-      continue toks, line, nest - 1, acc.add(t)
-    Cons(LinkStart(_) as t, toks), line, nest, acc =>
-      continue toks, line, nest + 1, acc.add(t)
-    Cons(Newline({ newline, .. }) as t, toks), _, nest, acc =>
-      continue toks, newline, nest, acc.add(t)
-    Cons(Inline({ endline, .. }) as t, toks), _, nest, acc =>
-      continue toks, endline, nest, acc.add(t)
-    Cons(t, toks), line, nest, acc => continue toks, line, nest, acc.add(t)
-    Nil, _, _, _ => None
-  }
+  let mut line = start_line
+  let mut nest = 0
+  let acc = []
+
+  // loop toks, start_line, 0, List::Nil {
+  //   Cons(RightBrack({ start: last, .. }), toks), line, 0, acc => {
+  //     tokens_shorten_last_line(to_last=last - 1, acc)
+  //     Some((toks, line, acc, last))
+  //   }
+  //   Cons(Backticks({ start, count, escaped }), toks), line, nest, acc =>
+  //     match self.try_code(toks, line, start~, count~, escaped~) {
+  //       None => continue toks, line, nest, acc
+  //       Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
+  //     }
+  //   Cons(MathSpanMarks({ start, count, may_open, .. }), toks),
+  //   line,
+  //   nest,
+  //   acc => {
+  //     if may_open.not() {
+  //       continue toks, line, nest, acc
+  //     }
+  //     match self.try_math_span(toks, line, start~, count~) {
+  //       None => continue toks, line, nest, acc
+  //       Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
+  //     }
+  //   }
+  //   Cons(AutolinkOrHtmlStart({ start }), toks), line, nest, acc =>
+  //     match self.try_autolink_or_html(toks, line, start~) {
+  //       None => continue toks, line, nest, acc
+  //       Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
+  //     }
+  //   Cons(RightBrack(_) as t, toks), line, nest, acc =>
+  //     continue toks, line, nest - 1, acc.add(t)
+  //   Cons(LinkStart(_) as t, toks), line, nest, acc =>
+  //     continue toks, line, nest + 1, acc.add(t)
+  //   Cons(Newline({ newline, .. }) as t, toks), _, nest, acc =>
+  //     continue toks, newline, nest, acc.add(t)
+  //   Cons(Inline({ endline, .. }) as t, toks), _, nest, acc =>
+  //     continue toks, endline, nest, acc.add(t)
+  //   Cons(t, toks), line, nest, acc => continue toks, line, nest, acc.add(t)
+  //   Nil, _, _, _ => None
+  // }
 }
 
 ///|
