@@ -181,62 +181,56 @@ fn tokens_rev_and_make_closer_index(
 }
 
 ///| Used to make the text delimitation precise for nested inlines.
-fn tokens_rev_and_shorten_last_line(
-  to_last~ : Int,
-  rev_toks : ArrayView[Token]
-) -> Array[Token] {
-  let mut last = to_last
-  let acc = []
-  for i = rev_toks.length() - 1; i >= 0; i = i - 1 {
-    let t = rev_toks[i]
+fn tokens_shorten_last_line(to_last~ : Int, toks : ArrayView[Token]) -> Unit {
+  let last = to_last
+  for i, t in toks {
     match t {
       Newline({ newline, .. } as nl) => {
-        let t = Newline({ ..nl, newline: { ..newline, last, } })
-        acc.push(t)
-        for j = i - 1; j >= 0; j = j - 1 {
-          acc.push(rev_toks[j])
-        }
+        toks[i] = Newline({ ..nl, newline: { ..newline, last, } })
         break
       }
       Inline({ endline, .. } as il) => {
-        let t = Token::Inline({ ..il, endline: { ..endline, last, } })
-        acc.push(t)
-        for j = i - 1; j >= 0; j = j - 1 {
-          acc.push(rev_toks[j])
-        }
+        toks[i] = Token::Inline({ ..il, endline: { ..endline, last, } })
         break
       }
-      _ => acc.push(t)
+      _ => ()
     }
   }
-  acc
 }
 
 ///|
-fn tokens_drop_stop_after_right_brack(toks : List[Token]) -> List[Token] {
-  toks
-  .drop_while(
-    fn(t) {
-      match t {
-        RightBrack(_) => false
-        _ => true
+fn tokens_drop_stop_after_right_brack(rev_toks : RevTokens) -> Unit {
+  while true {
+    match rev_toks.pop() {
+      None | Some(RightBrack(_)) => break
+      Some(_) => continue
+    }
+  }
+}
+
+///|
+fn tokens_pop_until(start~ : Int, rev_toks : RevTokens) -> Unit {
+  while true {
+    match rev_toks.pop() {
+      None => break
+      Some(t) => {
+        if t.start() < start {
+          continue
+        }
+        rev_toks.push(t)
+        break
       }
-    },
-  )
-  .tail()
+    }
+  }
 }
 
 ///|
-fn tokens_drop_until(start~ : Int, toks : List[Token]) -> List[Token] {
-  toks.drop_while(fn(t) { t.start() < start })
-}
-
-///|
-fn tokens_next_line(toks : List[Token]) -> (List[Token], LineSpan)? {
-  loop toks {
-    Nil => None
-    Cons(Newline({ newline, .. }), toks) => Some((toks, newline))
-    Cons(_, toks) => continue toks
+fn tokens_next_line(rev_toks : RevTokensView) -> (RevTokensView, LineSpan)? {
+  loop rev_toks {
+    [] => None
+    [.. as rev_toks, Newline({ newline, .. })] =>
+      return Some((rev_toks, newline))
+    [.. as rev_toks, _] => continue rev_toks
   }
 }
 
@@ -610,7 +604,7 @@ fn Parser::ext_math_span_token(
 /// If this function returns `Some((line_span, token))`, it means the stack has been modified.
 fn Parser::try_code(
   self : Parser,
-  rev_toks : Array[Token],
+  rev_toks : RevTokens,
   start_line : LineSpan,
   start~ : BytePos,
   count~ : Int,
@@ -661,7 +655,7 @@ fn Parser::try_code(
 /// If this function returns `Some((line_span, token))`, it means the stack has been modified.
 fn Parser::try_math_span(
   self : Parser,
-  rev_toks : Array[Token],
+  rev_toks : RevTokens,
   start_line : LineSpan,
   start~ : BytePos,
   count~ : Int
@@ -688,7 +682,7 @@ fn Parser::try_math_span(
           last=start + count - 1,
           first_line=start_line,
           last_line=line,
-          spans,
+          List::from_array(spans).rev(),
         )
         return Some((line, t))
       }
@@ -709,7 +703,7 @@ fn Parser::try_math_span(
 /// If this function returns `Some((line_span, token))`, it means the stack has been modified.
 fn Parser::try_autolink_or_html(
   self : Parser,
-  rev_toks : Array[Token],
+  rev_toks : RevTokens,
   line : LineSpan,
   start~ : BytePos
 ) -> (LineSpan, Token)? {
@@ -717,21 +711,21 @@ fn Parser::try_autolink_or_html(
   guard let None = @cmark_base.autolink_uri(self.i, last=line.last, start~) else {
     Some(last) => {
       let t = self.autolink_token(line, first=start, last~, is_email=false)
-      let toks = tokens_drop_until(start=last + 1, toks)
-      return Some((toks, line, t))
+      tokens_pop_until(start=last + 1, rev_toks)
+      return Some((line, t))
     }
   }
   guard let None = @cmark_base.autolink_email(self.i, last=line.last, start~) else {
     Some(last) => {
       let t = self.autolink_token(line, first=start, last~, is_email=true)
-      let toks = tokens_drop_until(start=last + 1, toks)
-      return Some((toks, line, t))
+      tokens_pop_until(start=last + 1, rev_toks)
+      return Some((line, t))
     }
   }
   guard let Some((toks, last_line, spans, last)) = @cmark_base.raw_html(
     next_line=tokens_next_line,
     self.i,
-    toks,
+    rev_toks[:],
     line~,
     start~,
   ) else {
@@ -742,8 +736,8 @@ fn Parser::try_autolink_or_html(
   // TODO: Replace this with arrays.
   let rev_spans = List::from_array(spans.rev())
   let t = self.raw_html_token(first~, last~, first_line~, last_line~, rev_spans)
-  let toks = tokens_drop_until(start=last + 1, toks)
-  Some((toks, last_line, t))
+  let toks = tokens_pop_until(start=last + 1, rev_toks)
+  Some((last_line, t))
 }
 
 ///|
@@ -765,51 +759,50 @@ fn Parser::label_of_rev_spans(
 }
 
 ///| https://spec.commonmark.org/current/#full-reference-link
+/// If the function returns `Some(Some(_))`, it means the `rev_toks` stack has been modified.
 fn Parser::try_full_reflink_remainder(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[RevTokens],
   line : LineSpan,
   image~ : Bool,
   start~ : BytePos
-) -> (List[Token], LineSpan, ReferenceKind, BytePos)?? {
-  @cmark_base.link_label(
+) -> (LineSpan, ReferenceKind, BytePos)?? {
+  guard let Some((rev_toks_, line, spans, last, key)) = @cmark_base.link_label(
     self.buf,
     next_line=tokens_next_line,
     self.i,
-    toks,
+    rev_toks.val[:],
     line~,
     start~,
-  ).map(
-    fn {
-      (toks, line, spans, last, key) => {
-        // TODO: Replace this with arrays.
-        let rev_spans = List::from_array(spans.rev())
-        let ref_ = self.label_of_rev_spans(key~, rev_spans)
-        let toks = tokens_drop_stop_after_right_brack(toks)
-        self
-        .find_def_for_ref(image~, ref_)
-        .map(
-          fn(def) { (toks, line, ReferenceKind::Ref(Full, ref_, def), last) },
-        )
-      }
-    },
-  )
+  ) else {
+    _ => None
+  }
+  // TODO: Replace this with arrays.
+  let rev_spans = List::from_array(spans.rev())
+  let ref_ = self.label_of_rev_spans(key~, rev_spans)
+  guard let Some(def) = self.find_def_for_ref(image~, ref_) else {
+    _ => Some(None)
+  }
+  rev_toks.val = rev_toks_.iter().to_array() // TODO: Maybe truncating is enough?
+  tokens_drop_stop_after_right_brack(rev_toks.val)
+  Some(Some((line, ReferenceKind::Ref(Full, ref_, def), last)))
 }
 
 ///| https://spec.commonmark.org/current/#shortcut-reference-link
+/// If the function returns `Some(Some(_))`, it means the `rev_toks` stack has been modified.
 fn Parser::try_shortcut_reflink(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[Array[Token]],
   line : LineSpan,
   image~ : Bool,
   start~ : BytePos
-) -> (List[Token], LineSpan, ReferenceKind, BytePos)? {
+) -> (LineSpan, ReferenceKind, BytePos)? {
   let start = start + image.to_int() // [
-  guard let Some((toks, line, spans, last, key)) = @cmark_base.link_label(
+  guard let Some((rev_toks_, line, spans, last, key)) = @cmark_base.link_label(
     self.buf,
     next_line=tokens_next_line,
     self.i,
-    toks,
+    rev_toks.val[:],
     line~,
     start~,
   ) else {
@@ -818,10 +811,10 @@ fn Parser::try_shortcut_reflink(
   // TODO: Replace this with arrays.
   let rev_spans = List::from_array(spans.rev())
   let ref_ = self.label_of_rev_spans(key~, rev_spans)
-  let toks = tokens_drop_stop_after_right_brack(toks)
-  self
-  .find_def_for_ref(image~, ref_)
-  .map(fn(def) { (toks, line, ReferenceKind::Ref(Shortcut, ref_, def), last) })
+  guard let Some(def) = self.find_def_for_ref(image~, ref_) else { _ => None }
+  rev_toks.val = rev_toks_.iter().to_array() // TODO: Maybe truncating is enough?
+  tokens_drop_stop_after_right_brack(rev_toks.val)
+  Some((line, ReferenceKind::Ref(Shortcut, ref_, def), last))
 }
 
 ///| https://spec.commonmark.org/current/#collapsed-reference-link
@@ -932,7 +925,7 @@ fn Parser::try_inline_link_remainder(
     last_line=line,
   )
   let ld = { v: ld, meta: self.meta(textloc) }
-  let toks = tokens_drop_until(start=last + 1, toks)
+  let toks = tokens_pop_until(start=last + 1, toks)
   Some((toks, line, Inline(ld), last))
 }
 
@@ -947,7 +940,7 @@ fn Parser::find_link_text_tokens(
   let _ = start
   loop toks, start_line, 0, List::Nil {
     Cons(RightBrack({ start: last, .. }), toks), line, 0, acc => {
-      let acc = tokens_rev_and_shorten_last_line(to_last=last - 1, acc)
+      tokens_shorten_last_line(to_last=last - 1, acc)
       Some((toks, line, acc, last))
     }
     Cons(Backticks({ start, count, escaped }), toks), line, nest, acc =>
@@ -1066,7 +1059,7 @@ fn Parser::try_link_def(
 /// If this function returns `Some((line_span, token))`, it means the stack has been modified.
 fn Parser::try_link(
   self : Parser,
-  rev_toks : Array[Token],
+  rev_toks : RevTokens,
   start_line : LineSpan,
   image~ : Bool,
   start~ : BytePos
@@ -1205,7 +1198,7 @@ fn Parser::find_emphasis_text(
       if marks.may_close && marks_match(marks, opener) {
         let used = if marks.count >= 2 && opener.count >= 2 { 2 } else { 1 }
         let to_last = marks.start - 1
-        let acc = tokens_rev_and_shorten_last_line(to_last~, acc)
+        let acc = tokens_shorten_last_line(to_last~, acc)
         Ok((toks, line, used, acc, marks))
       } else if marks.may_open && marks_has_precedence(marks, opener) {
         match self.try_emphasis(toks, line, opener=marks) {
@@ -1282,7 +1275,6 @@ fn Parser::try_emphasis(
 ///|
 /// Tries to extract stricken-through tokens from the `rev_toks` stack and collect them into `striken_toks`.
 /// If this function returns `Some((line_span, stricken_toks, closer))`, it means the stack has been modified.
-// TODO: What is it doing?
 fn Parser::find_strikethrough_text(
   self : Parser,
   rev_toks : Ref[Array[Token]],
@@ -1299,7 +1291,7 @@ fn Parser::find_strikethrough_text(
       Some(StrikethroughMarks(marks)) =>
         if marks.may_close {
           let to_last = marks.start - 1
-          let acc = tokens_rev_and_shorten_last_line(to_last~, acc)
+          tokens_shorten_last_line(to_last~, acc[:])
           return Some((line, acc, marks))
         } else if marks.may_open {
           for l in self.try_strikethrough(rev_toks, line, opener=marks) {
