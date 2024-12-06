@@ -181,50 +181,56 @@ fn tokens_rev_and_make_closer_index(
 }
 
 ///| Used to make the text delimitation precise for nested inlines.
-fn tokens_rev_and_shorten_last_line(
-  to_last~ : Int,
-  acc : List[Token],
-  toks : List[Token]
-) -> List[Token] {
-  loop to_last, acc, toks {
-    last, acc, Cons(Newline({ newline, .. } as nl), toks) => {
-      let t = Newline({ ..nl, newline: { ..newline, last, } })
-      toks.rev_concat(acc.add(t))
+fn tokens_shorten_last_line(to_last~ : Int, toks : ArrayView[Token]) -> Unit {
+  let last = to_last
+  for i, t in toks {
+    match t {
+      Newline({ newline, .. } as nl) => {
+        toks[i] = Newline({ ..nl, newline: { ..newline, last, } })
+        break
+      }
+      Inline({ endline, .. } as il) => {
+        toks[i] = Token::Inline({ ..il, endline: { ..endline, last, } })
+        break
+      }
+      _ => ()
     }
-    last, acc, Cons(Inline({ endline, .. } as il), toks) => {
-      let t = Token::Inline({ ..il, endline: { ..endline, last, } })
-      toks.rev_concat(acc.add(t))
-    }
-    to_last, acc, Cons(t, toks) => continue to_last, acc.add(t), toks
-    _, acc, Nil => acc
   }
 }
 
 ///|
-fn tokens_drop_stop_after_right_brack(toks : List[Token]) -> List[Token] {
-  toks
-  .drop_while(
-    fn(t) {
-      match t {
-        RightBrack(_) => false
-        _ => true
+fn tokens_drop_stop_after_right_brack(rev_toks : RevTokens) -> Unit {
+  while true {
+    match rev_toks.pop() {
+      None | Some(RightBrack(_)) => break
+      Some(_) => continue
+    }
+  }
+}
+
+///|
+fn tokens_pop_until(start~ : Int, rev_toks : RevTokens) -> Unit {
+  while true {
+    match rev_toks.pop() {
+      None => break
+      Some(t) => {
+        if t.start() < start {
+          continue
+        }
+        rev_toks.push(t)
+        break
       }
-    },
-  )
-  .tail()
+    }
+  }
 }
 
 ///|
-fn tokens_drop_until(start~ : Int, toks : List[Token]) -> List[Token] {
-  toks.drop_while(fn(t) { t.start() < start })
-}
-
-///|
-fn tokens_next_line(toks : List[Token]) -> (List[Token], LineSpan)? {
-  loop toks {
-    Nil => None
-    Cons(Newline({ newline, .. }), toks) => Some((toks, newline))
-    Cons(_, toks) => continue toks
+fn tokens_next_line(rev_toks : RevTokensView) -> (RevTokensView, LineSpan)? {
+  loop rev_toks {
+    [] => None
+    [.. as rev_toks, Newline({ newline, .. })] =>
+      return Some((rev_toks, newline))
+    [.. as rev_toks, _] => continue rev_toks
   }
 }
 
@@ -436,17 +442,17 @@ fn Parser::try_add_text_inline(
   line : LineSpan,
   first~ : Int,
   last~ : Int,
-  acc : List[Inline]
-) -> List[Inline] {
+  acc : Array[Inline]
+) -> Unit {
   if first > last {
-    return acc
+    return
   }
   let first = if first == line.first {
     self.first_non_blank_in_span(line) // Strip leading blanks
   } else {
     first
   }
-  acc.add(Text(self.clean_unesc_unref_span({ ..line, first, last })))
+  acc.push(Text(self.clean_unesc_unref_span({ ..line, first, last })))
 }
 
 ///|
@@ -456,10 +462,10 @@ fn Parser::inlines_inline(
   last~ : BytePos,
   first_line~ : LineSpan,
   last_line~ : LineSpan,
-  acc : List[Inline]
+  acc : Array[Inline]
 ) -> Inline {
   match acc {
-    Cons(i, Nil) => i
+    [i] => i
     is_ => {
       let text_loc = self.text_loc_of_lines(
         first~,
@@ -480,10 +486,12 @@ fn Parser::code_span_token(
   last~ : BytePos,
   first_line~ : LineSpan,
   last_line~ : LineSpan,
-  rev_spans : RevSpans
+  spans : Array[Span]
 ) -> Token {
   let text_loc = self.text_loc_of_lines(first~, last~, first_line~, last_line~)
-  let code_layout = self.raw_tight_block_lines(rev_spans~)
+  let code_layout = self.raw_tight_block_lines(
+    rev_spans=List::from_array(spans).rev(),
+  )
   let meta = self.meta(text_loc)
   let cs = CodeSpan({ v: { backticks: count, code_layout }, meta })
   Inline({ start: first, inline: cs, endline: last_line, next: last + 1 })
@@ -592,126 +600,132 @@ fn Parser::ext_math_span_token(
 // Parsers
 
 ///| https://spec.commonmark.org/current/#code-span
+/// Tries to push an inline code span to the `rev_toks` stack.
+/// If this function returns `Some((line_span, token))`, it means the stack has been modified.
 fn Parser::try_code(
   self : Parser,
-  toks : List[Token],
+  rev_toks : RevTokens,
   start_line : LineSpan,
   start~ : BytePos,
   count~ : Int,
   escaped~ : Bool
-) -> (List[Token], LineSpan, Token)? {
+) -> (LineSpan, Token)? {
   let cstart = start
-  if escaped || has_backticks(count~, after=cstart, self.cidx).not() {
-    return None
+  guard escaped.not() && has_backticks(count~, after=cstart, self.cidx) else {
+    None
   }
   let first = cstart + count
-  loop toks, { ..start_line, first, }, count, List::Nil, first {
-    Nil, _, _, _, _ => None
-    Cons(Backticks({ start, count: c, .. }), toks), line, count, spans, k => {
-      if c != count {
-        continue toks, line, count, spans, k
+  let mut line = { ..start_line, first, }
+  let mut spans = []
+  let mut k = first
+  while true {
+    match rev_toks.pop() {
+      None => break
+      Some(Backticks({ start, count: c, .. })) => {
+        guard c == count else { continue }
+        let span : Span = {
+          start: line.first,
+          span: { ..line, first: k, last: start - 1 },
+        }
+        spans.push(span)
+        let t = self.code_span_token(
+          count~,
+          first=cstart,
+          last=start + count - 1,
+          first_line=start_line,
+          last_line=line,
+          spans,
+        )
+        return Some((line, t))
       }
-      let span : Span = {
-        start: line.first,
-        span: { ..line, first: k, last: start - 1 },
+      Some(Newline({ newline, .. })) => {
+        let span : Span = { start: line.first, span: { ..line, first: k } }
+        spans.push(span)
+        k = self.first_non_blank_in_span(newline)
+        line = newline
       }
-      let spans = spans.add(span)
-      let first = cstart
-      let last = start + count - 1
-      let first_line = start_line
-      let last_line = line
-      let t = self.code_span_token(
-        count~,
-        first~,
-        last~,
-        first_line~,
-        last_line~,
-        spans,
-      )
-      Some((toks, line, t))
+      Some(_) => continue
     }
-    Cons(Newline({ newline, .. }), toks), line, count, spans, k => {
-      let span : Span = { start: line.first, span: { ..line, first: k } }
-      let spans = spans.add(span)
-      let k = self.first_non_blank_in_span(newline)
-      continue toks, newline, count, spans, k
-    }
-    Cons(_, toks), line, count, spans, k => continue toks, line, count, spans, k
   }
+  None
 }
 
 ///|
+/// Tries to push an inline math span to the `rev_toks` stack.
+/// If this function returns `Some((line_span, token))`, it means the stack has been modified.
 fn Parser::try_math_span(
   self : Parser,
-  toks : List[Token],
+  rev_toks : RevTokens,
   start_line : LineSpan,
   start~ : BytePos,
   count~ : Int
-) -> (List[Token], LineSpan, Token)? {
+) -> (LineSpan, Token)? {
   let cstart = start
   guard self.cidx.has_math_span(count~, after=cstart) else { None }
   let first = cstart + count
-  loop toks, { ..start_line, first, }, count, List::Nil, first {
-    Nil, _, _, _, _ => None
-    Cons(MathSpanMarks({ start, count: c, may_close, .. }), toks),
-    line,
-    count,
-    spans,
-    k => {
-      guard c == count && may_close else {
-        continue toks, line, count, spans, k
+  let mut line = { ..start_line, first, }
+  let mut spans = []
+  let mut k = first
+  while true {
+    match rev_toks.pop() {
+      None => break
+      Some(MathSpanMarks({ start, count: c, may_close, .. })) => {
+        guard c == count && may_close else { continue }
+        let span : Span = {
+          start: line.first,
+          span: { ..line, first: k, last: start - 1 },
+        }
+        spans.push(span)
+        let t = self.ext_math_span_token(
+          count~,
+          first=cstart,
+          last=start + count - 1,
+          first_line=start_line,
+          last_line=line,
+          List::from_array(spans).rev(),
+        )
+        return Some((line, t))
       }
-      let span : Span = {
-        start: line.first,
-        span: { ..line, first: k, last: start - 1 },
+      Some(Newline({ newline, .. })) => {
+        let span : Span = { start: line.first, span: { ..line, first: k } }
+        spans.push(span)
+        k = self.first_non_blank_in_span(newline)
+        line = newline
       }
-      let spans = spans.add(span)
-      let t = self.ext_math_span_token(
-        count~,
-        first=cstart,
-        last=start + count - 1,
-        first_line=start_line,
-        last_line=line,
-        spans,
-      )
-      Some((toks, line, t))
+      Some(_) => continue
     }
-    Cons(Newline({ newline, .. }), toks), line, count, spans, k => {
-      let span : Span = { start: line.first, span: { ..line, first: k } }
-      let spans = spans.add(span)
-      let k = self.first_non_blank_in_span(newline)
-      continue toks, newline, count, spans, k
-    }
-    Cons(_, toks), line, count, spans, k => continue toks, line, count, spans, k
   }
+  None
 }
 
 ///|
+/// Tries to push an inline emphasis to the `rev_toks` stack.
+/// If this function returns `Some((line_span, token))`, it means the stack has been modified.
 fn Parser::try_autolink_or_html(
   self : Parser,
-  toks : List[Token],
+  rev_toks : RevTokens,
   line : LineSpan,
   start~ : BytePos
-) -> (List[Token], LineSpan, Token)? {
+) -> (LineSpan, Token)? {
   // Weirdly, there's seemingly no `if let` in Moonbit.
   guard let None = @cmark_base.autolink_uri(self.i, last=line.last, start~) else {
     Some(last) => {
       let t = self.autolink_token(line, first=start, last~, is_email=false)
-      let toks = tokens_drop_until(start=last + 1, toks)
-      return Some((toks, line, t))
+      tokens_pop_until(start=last + 1, rev_toks)
+      return Some((line, t))
     }
   }
   guard let None = @cmark_base.autolink_email(self.i, last=line.last, start~) else {
     Some(last) => {
       let t = self.autolink_token(line, first=start, last~, is_email=true)
-      let toks = tokens_drop_until(start=last + 1, toks)
-      return Some((toks, line, t))
+      tokens_pop_until(start=last + 1, rev_toks)
+      return Some((line, t))
     }
   }
   guard let Some((toks, last_line, spans, last)) = @cmark_base.raw_html(
     next_line=tokens_next_line,
     self.i,
-    toks,
+    rev_toks[:],
     line~,
     start~,
   ) else {
@@ -719,9 +733,11 @@ fn Parser::try_autolink_or_html(
   }
   let first = start
   let first_line = line
-  let t = self.raw_html_token(first~, last~, first_line~, last_line~, spans)
-  let toks = tokens_drop_until(start=last + 1, toks)
-  Some((toks, last_line, t))
+  // TODO: Replace this with arrays.
+  let rev_spans = List::from_array(spans.rev())
+  let t = self.raw_html_token(first~, last~, first_line~, last_line~, rev_spans)
+  let toks = tokens_pop_until(start=last + 1, rev_toks)
+  Some((last_line, t))
 }
 
 ///|
@@ -743,107 +759,114 @@ fn Parser::label_of_rev_spans(
 }
 
 ///| https://spec.commonmark.org/current/#full-reference-link
+/// If the function returns `Some(Some(_))`, it means the `rev_toks` stack has been modified.
 fn Parser::try_full_reflink_remainder(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[RevTokens],
   line : LineSpan,
   image~ : Bool,
   start~ : BytePos
-) -> (List[Token], LineSpan, ReferenceKind, BytePos)?? {
-  @cmark_base.link_label(
+) -> (LineSpan, ReferenceKind, BytePos)?? {
+  guard let Some((rev_toks_, line, spans, last, key)) = @cmark_base.link_label(
     self.buf,
     next_line=tokens_next_line,
     self.i,
-    toks,
+    rev_toks.val[:],
     line~,
     start~,
-  ).map(
-    fn {
-      (toks, line, rev_spans, last, key) => {
-        let ref_ = self.label_of_rev_spans(key~, rev_spans)
-        let toks = tokens_drop_stop_after_right_brack(toks)
-        self
-        .find_def_for_ref(image~, ref_)
-        .map(
-          fn(def) { (toks, line, ReferenceKind::Ref(Full, ref_, def), last) },
-        )
-      }
-    },
-  )
+  ) else {
+    _ => None
+  }
+  // TODO: Replace this with arrays.
+  let rev_spans = List::from_array(spans.rev())
+  let ref_ = self.label_of_rev_spans(key~, rev_spans)
+  guard let Some(def) = self.find_def_for_ref(image~, ref_) else {
+    _ => Some(None)
+  }
+  rev_toks.val = rev_toks_.iter().to_array() // TODO: Maybe truncating is enough?
+  tokens_drop_stop_after_right_brack(rev_toks.val)
+  Some(Some((line, ReferenceKind::Ref(Full, ref_, def), last)))
 }
 
 ///| https://spec.commonmark.org/current/#shortcut-reference-link
+/// If the function returns `Some(Some(_))`, it means the `rev_toks` stack has been modified.
 fn Parser::try_shortcut_reflink(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[RevTokens],
   line : LineSpan,
   image~ : Bool,
   start~ : BytePos
-) -> (List[Token], LineSpan, ReferenceKind, BytePos)? {
+) -> (LineSpan, ReferenceKind, BytePos)? {
   let start = start + image.to_int() // [
-  guard let Some((toks, line, rev_spans, last, key)) = @cmark_base.link_label(
+  guard let Some((rev_toks_, line, spans, last, key)) = @cmark_base.link_label(
     self.buf,
     next_line=tokens_next_line,
     self.i,
-    toks,
+    rev_toks.val[:],
     line~,
     start~,
   ) else {
     _ => return None
   }
+  // TODO: Replace this with arrays.
+  let rev_spans = List::from_array(spans.rev())
   let ref_ = self.label_of_rev_spans(key~, rev_spans)
-  let toks = tokens_drop_stop_after_right_brack(toks)
-  self
-  .find_def_for_ref(image~, ref_)
-  .map(fn(def) { (toks, line, ReferenceKind::Ref(Shortcut, ref_, def), last) })
+  guard let Some(def) = self.find_def_for_ref(image~, ref_) else { _ => None }
+  rev_toks.val = rev_toks_.iter().to_array() // TODO: Maybe truncating is enough?
+  tokens_drop_stop_after_right_brack(rev_toks.val)
+  Some((line, ReferenceKind::Ref(Shortcut, ref_, def), last))
 }
 
 ///| https://spec.commonmark.org/current/#collapsed-reference-link
+/// If the function returns `Some()`, it means the `rev_toks` stack has been modified.
 fn Parser::try_collapsed_reflink(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[RevTokens],
   line : LineSpan,
   image~ : Bool,
   start~ : BytePos
-) -> (List[Token], LineSpan, ReferenceKind, BytePos)? {
+) -> (LineSpan, ReferenceKind, BytePos)? {
   let start = start + image.to_int() // [
-  guard let Some((toks, line, rev_spans, last, key)) = @cmark_base.link_label(
+  guard let Some((rev_toks_, line, spans, last, key)) = @cmark_base.link_label(
     self.buf,
     next_line=tokens_next_line,
     self.i,
-    toks,
+    rev_toks.val[:],
     line~,
     start~,
   ) else {
     _ => return None
   }
+  // TODO: Replace this with arrays.
+  let rev_spans = List::from_array(spans.rev())
   let ref_ = self.label_of_rev_spans(key~, rev_spans)
   let last = last + 2 // ][]
-  let toks = tokens_drop_stop_after_right_brack(toks)
-  let toks = tokens_drop_stop_after_right_brack(toks)
-  self
-  .find_def_for_ref(image~, ref_)
-  .map(fn(def) { (toks, line, ReferenceKind::Ref(Collapsed, ref_, def), last) })
+  guard let Some(def) = self.find_def_for_ref(image~, ref_) else { _ => None }
+  rev_toks.val = rev_toks_.iter().to_array() // TODO: Maybe truncating is enough?
+  tokens_drop_stop_after_right_brack(rev_toks.val)
+  tokens_drop_stop_after_right_brack(rev_toks.val)
+  Some((line, ReferenceKind::Ref(Collapsed, ref_, def), last))
 }
 
 ///| https://spec.commonmark.org/current/#inline-link
+/// If the function returns `Some(_)`, it means the `rev_toks` stack has been modified.
 fn Parser::try_inline_link_remainder(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[RevTokens],
   start_line : LineSpan,
   image~ : Bool,
   start~ : BytePos
-) -> (List[Token], LineSpan, ReferenceKind, BytePos)? {
+) -> (LineSpan, ReferenceKind, BytePos)? {
   let _ = image
   let st = start
-  guard self.cidx.has_right_paren(after=st) else { return None }
+  guard self.cidx.has_right_paren(after=st) else { None }
   guard let Some((toks, line, before_dest, start)) = self.first_non_blank_over_nl(
     next_line=tokens_next_line,
-    toks,
+    rev_toks.val[:],
     start_line,
     start=st + 1,
   ) else {
-    _ => return None
+    _ => None
   }
   let (toks, line, angled_dest, dest, start) = match
     @cmark_base.link_destination(self.i, last=line.last, start~) {
@@ -871,14 +894,16 @@ fn Parser::try_inline_link_remainder(
             start~,
           ) {
           None => (toks, line, after_dest, '"', None, start)
-          Some((toks, line, rev_spans, last)) => {
+          Some((toks, line, spans, last)) => {
+            // TODO: Replace this with arrays.
+            let rev_spans = List::from_array(spans.rev())
             let title = self.tight_block_lines(rev_spans~)
             (toks, line, after_dest, self.i[start], Some(title), last + 1)
           }
         }
       }
   }
-  let (toks, line, after_title, last) = self
+  let (rev_toks_, line, after_title, last) = self
     .first_non_blank_over_nl(next_line=tokens_next_line, toks, line, start~)
     .or((toks, line, List::Nil, start))
   if last > line.last || self.i[last] != ')' {
@@ -902,71 +927,78 @@ fn Parser::try_inline_link_remainder(
     last_line=line,
   )
   let ld = { v: ld, meta: self.meta(textloc) }
-  let toks = tokens_drop_until(start=last + 1, toks)
-  Some((toks, line, Inline(ld), last))
+  rev_toks.val = rev_toks_.iter().to_array() // TODO: Maybe truncating is enough?
+  tokens_pop_until(start=last + 1, rev_toks.val)
+  Some((line, Inline(ld), last))
 }
 
 // https://spec.commonmark.org/current/#link-text
 ///|
 fn Parser::find_link_text_tokens(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[RevTokens],
   start_line : LineSpan,
   start~ : BytePos
-) -> (List[Token], LineSpan, List[Token], BytePos)? {
+) -> (LineSpan, Array[Token], BytePos)? {
   let _ = start
-  loop toks, start_line, 0, List::Nil {
-    Cons(RightBrack({ start: last, .. }), toks), line, 0, acc => {
-      let acc = tokens_rev_and_shorten_last_line(to_last=last - 1, Nil, acc)
-      Some((toks, line, acc, last))
-    }
-    Cons(Backticks({ start, count, escaped }), toks), line, nest, acc =>
-      match self.try_code(toks, line, start~, count~, escaped~) {
-        None => continue toks, line, nest, acc
-        Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
-      }
-    Cons(MathSpanMarks({ start, count, may_open, .. }), toks),
-    line,
-    nest,
-    acc => {
-      if may_open.not() {
-        continue toks, line, nest, acc
-      }
-      match self.try_math_span(toks, line, start~, count~) {
-        None => continue toks, line, nest, acc
-        Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
-      }
-    }
-    Cons(AutolinkOrHtmlStart({ start }), toks), line, nest, acc =>
-      match self.try_autolink_or_html(toks, line, start~) {
-        None => continue toks, line, nest, acc
-        Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
-      }
-    Cons(RightBrack(_) as t, toks), line, nest, acc =>
-      continue toks, line, nest - 1, acc.add(t)
-    Cons(LinkStart(_) as t, toks), line, nest, acc =>
-      continue toks, line, nest + 1, acc.add(t)
-    Cons(Newline({ newline, .. }) as t, toks), _, nest, acc =>
-      continue toks, newline, nest, acc.add(t)
-    Cons(Inline({ endline, .. }) as t, toks), _, nest, acc =>
-      continue toks, endline, nest, acc.add(t)
-    Cons(t, toks), line, nest, acc => continue toks, line, nest, acc.add(t)
-    Nil, _, _, _ => None
-  }
+  let mut line = start_line
+  let mut nest = 0
+  let acc = []
+
+  // loop toks, start_line, 0, List::Nil {
+  //   Cons(RightBrack({ start: last, .. }), toks), line, 0, acc => {
+  //     tokens_shorten_last_line(to_last=last - 1, acc)
+  //     Some((toks, line, acc, last))
+  //   }
+  //   Cons(Backticks({ start, count, escaped }), toks), line, nest, acc =>
+  //     match self.try_code(toks, line, start~, count~, escaped~) {
+  //       None => continue toks, line, nest, acc
+  //       Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
+  //     }
+  //   Cons(MathSpanMarks({ start, count, may_open, .. }), toks),
+  //   line,
+  //   nest,
+  //   acc => {
+  //     if may_open.not() {
+  //       continue toks, line, nest, acc
+  //     }
+  //     match self.try_math_span(toks, line, start~, count~) {
+  //       None => continue toks, line, nest, acc
+  //       Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
+  //     }
+  //   }
+  //   Cons(AutolinkOrHtmlStart({ start }), toks), line, nest, acc =>
+  //     match self.try_autolink_or_html(toks, line, start~) {
+  //       None => continue toks, line, nest, acc
+  //       Some((toks, line, t)) => continue toks, line, nest, acc.add(t)
+  //     }
+  //   Cons(RightBrack(_) as t, toks), line, nest, acc =>
+  //     continue toks, line, nest - 1, acc.add(t)
+  //   Cons(LinkStart(_) as t, toks), line, nest, acc =>
+  //     continue toks, line, nest + 1, acc.add(t)
+  //   Cons(Newline({ newline, .. }) as t, toks), _, nest, acc =>
+  //     continue toks, newline, nest, acc.add(t)
+  //   Cons(Inline({ endline, .. }) as t, toks), _, nest, acc =>
+  //     continue toks, endline, nest, acc.add(t)
+  //   Cons(t, toks), line, nest, acc => continue toks, line, nest, acc.add(t)
+  //   Nil, _, _, _ => None
+  // }
 }
 
 ///|
+/// Tries to push a link definition to the `rev_toks` stack.
+/// If this function returns `Some((line_span, token, had_link))`, it means the stack has been modified.
 fn Parser::try_link_def(
   self : Parser,
   start~ : BytePos,
-  start_toks~ : List[Token],
+  rev_toks~ : Array[Token],
   start_line~ : LineSpan,
   toks~ : List[Token],
   line~ : LineSpan,
   text_last~ : BytePos,
   image~ : Bool,
   text : List[Inline]
-) -> (List[Token], LineSpan, Token, Bool)? {
+) -> (LineSpan, Token, Bool)? {
   let next = text_last + 1
   let link = if next > line.last {
     self.try_shortcut_reflink(start_toks, start_line, image~, start~)
@@ -1009,7 +1041,7 @@ fn Parser::try_link_def(
     last=text_last,
     first_line=start_line,
     last_line=line,
-    text,
+    text.to_array(),
   )
   let link : InlineLink = { text, reference }
   let t = self.link_token(
@@ -1030,13 +1062,15 @@ fn Parser::try_link_def(
 // First pass
 
 ///|
+/// Tries to push a link to the `rev_toks` stack.
+/// If this function returns `Some((line_span, token))`, it means the stack has been modified.
 fn Parser::try_link(
   self : Parser,
-  start_toks : List[Token],
+  rev_toks : RevTokens,
   start_line : LineSpan,
   image~ : Bool,
   start~ : BytePos
-) -> (List[Token], LineSpan, Token, Bool)? {
+) -> (LineSpan, Token, Bool)? {
   guard self.cidx.has_right_brack(after=start) else { return None }
   guard let Some((toks, line, text_toks, text_last)) = self.find_link_text_tokens( // text_last with ] delim
     start_toks,
@@ -1068,54 +1102,69 @@ fn Parser::try_link(
     line~,
     text_last~,
     image~,
-    text,
+    List::from_array(text),
   )
 }
 
 ///| Parse inline atoms and links.
-/// Links are parsed here otherwise link reference data gets parsed as atoms. 
+/// Links are parsed here otherwise link reference data gets parsed as atoms.
 fn Parser::first_pass(
   self : Parser,
-  toks : List[Token],
+  toks : ArrayView[Token],
   line : LineSpan
-) -> (List[Token], Bool) {
-  loop toks, line, false, List::Nil {
-    Nil, _, had_link, acc => (acc.rev(), had_link)
-    Cons(Backticks({ start, count, escaped }), toks), line, had_link, acc =>
-      match self.try_code(toks, line, start~, count~, escaped~) {
-        None => continue toks, line, had_link, acc
-        Some((toks, line, t)) => continue toks, line, had_link, acc.add(t)
+) -> (Array[Token], Bool) {
+  let acc = []
+  let mut had_link = false
+  let mut line = line
+  let rev_toks = toks.iter().to_array()..rev_inplace()
+  while true {
+    match rev_toks.pop() {
+      None => break
+      Some(Backticks({ start, count, escaped })) =>
+        match self.try_code(rev_toks, line, start~, count~, escaped~) {
+          None => continue
+          Some((line, t)) => {
+            acc.push(t)
+            continue
+          }
+        }
+      Some(MathSpanMarks({ start, count, may_open, .. })) => {
+        guard may_open else { continue }
+        match self.try_math_span(rev_toks, line, start~, count~) {
+          None => continue
+          Some((line, t)) => {
+            acc.push(t)
+            continue
+          }
+        }
       }
-    Cons(MathSpanMarks({ start, count, may_open, .. }), toks),
-    line,
-    had_link,
-    acc => {
-      if may_open.not() {
-        continue toks, line, had_link, acc
+      Some(AutolinkOrHtmlStart({ start, .. })) =>
+        match self.try_autolink_or_html(rev_toks, line, start~) {
+          None => continue
+          Some((line, t)) => {
+            acc.push(t)
+            continue
+          }
+        }
+      Some(LinkStart({ start, image })) =>
+        match self.try_link(rev_toks, line, image~, start~) {
+          None => continue
+          Some((l, t, had_link_)) => {
+            acc.push(t)
+            line = l
+            had_link = had_link_
+            continue
+          }
+        }
+      Some(RightBrack(_)) => continue
+      Some(Newline({ newline, .. }) as nl) => {
+        line = newline
+        acc.push(nl)
       }
-      match self.try_math_span(toks, line, start~, count~) {
-        None => continue toks, line, had_link, acc
-        Some((toks, line, t)) => continue toks, line, had_link, acc.add(t)
-      }
+      Some(t) => acc.push(t)
     }
-    Cons(AutolinkOrHtmlStart({ start, .. }), toks), line, had_link, acc =>
-      match self.try_autolink_or_html(toks, line, start~) {
-        None => continue toks, line, had_link, acc
-        Some((toks, line, t)) => continue toks, line, had_link, acc.add(t)
-      }
-    Cons(LinkStart({ start, image }), toks), line, had_link, acc =>
-      match self.try_link(toks, line, image~, start~) {
-        None => continue toks, line, had_link, acc
-        Some((toks, line, t, had_link)) =>
-          continue toks, line, had_link, acc.add(t)
-      }
-    Cons(RightBrack(_), toks), line, had_link, acc =>
-      continue toks, line, had_link, acc
-    Cons(Newline({ newline, .. }) as nl, toks), _, had_link, acc =>
-      continue toks, newline, had_link, acc.add(nl)
-    Cons(t, toks), line, had_link, acc =>
-      continue toks, line, had_link, acc.add(t)
   }
+  (acc, had_link)
 }
 
 // Second pass
@@ -1123,14 +1172,10 @@ fn Parser::first_pass(
 ///|
 fn Parser::find_emphasis_text(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[Array[Token]],
   line : LineSpan,
   opener~ : TokenEmphasisMarks
-) ->
-     Result[
-       (List[Token], LineSpan, Int, List[Token], TokenEmphasisMarks),
-       List[Token],
-     ] {
+) -> (LineSpan, Int, Array[Token], TokenEmphasisMarks)? {
   fn marks_match(marks : TokenEmphasisMarks, opener : TokenEmphasisMarks) {
     opener.char == marks.char &&
     (
@@ -1160,7 +1205,7 @@ fn Parser::find_emphasis_text(
       if marks.may_close && marks_match(marks, opener) {
         let used = if marks.count >= 2 && opener.count >= 2 { 2 } else { 1 }
         let to_last = marks.start - 1
-        let acc = tokens_rev_and_shorten_last_line(to_last~, Nil, acc)
+        let acc = tokens_shorten_last_line(to_last~, acc)
         Ok((toks, line, used, acc, marks))
       } else if marks.may_open && marks_has_precedence(marks, opener) {
         match self.try_emphasis(toks, line, opener=marks) {
@@ -1183,22 +1228,22 @@ fn Parser::find_emphasis_text(
 }
 
 ///|
+/// Tries to push an emphasis to the `rev_toks` stack.
+/// If this function returns `Some(line_span)`, it means the stack has been modified.
 fn Parser::try_emphasis(
   self : Parser,
-  start_toks : List[Token],
+  rev_toks : Ref[Array[Token]],
   start_line : LineSpan,
   opener~ : TokenEmphasisMarks
-) -> Result[(List[Token], LineSpan), List[Token]] {
+) -> LineSpan? {
   let start = opener.start
-  guard self.cidx.has_emphasis(char=opener.char, after=start) else {
-    Err(start_toks)
-  }
-  guard let Ok((toks, line, used, emph_toks, closer)) = self.find_emphasis_text(
-    start_toks,
+  guard self.cidx.has_emphasis(char=opener.char, after=start) else { None }
+  guard let Some((line, used, emph_toks, closer)) = self.find_emphasis_text(
+    rev_toks,
     start_line,
     opener~,
   ) else {
-    Err(toks) => Err(toks)
+    _ => None
   }
   let text_first = start + opener.count
   let text_last = closer.start - 1
@@ -1209,86 +1254,84 @@ fn Parser::try_emphasis(
   let emph = {
     let last = if start_line == line { text_last } else { start_line.last }
     let text_start = { ..start_line, first: text_first, last }
-    let emph_toks = self.second_pass(emph_toks, text_start)
+    let emph_toks = self.second_pass(emph_toks[:], text_start)[:]
     let text = self.last_pass(emph_toks, text_start)
     self.inlines_inline(first~, last=text_last, first_line~, last_line~, text)
   }
-  let toks = {
-    let count = closer.count - used
-    if count == 0 {
-      toks
-    } else {
-      toks.add(EmphasisMarks({ ..closer, start: last + 1, count }))
-    }
+  let count = closer.count - used
+  if count != 0 {
+    rev_toks.val.push(EmphasisMarks({ ..closer, start: last + 1, count }))
   }
-  let toks = {
-    let strong = used == 2
-    let emph = self.emphasis_token(
-      first~,
-      last~,
-      first_line~,
-      last_line~,
-      strong~,
-      emph,
-    )
-    toks.add(emph)
+  let strong = used == 2
+  let emph = self.emphasis_token(
+    first~,
+    last~,
+    first_line~,
+    last_line~,
+    strong~,
+    emph,
+  )
+  rev_toks.val.push(emph)
+  let count = opener.count - used
+  if count != 0 {
+    rev_toks.val.push(EmphasisMarks({ ..opener, count, }))
   }
-  let toks = {
-    let count = opener.count - used
-    if count == 0 {
-      toks
-    } else {
-      toks.add(EmphasisMarks({ ..opener, count, }))
-    }
-  }
-  Ok((toks, line))
+  Some(line)
 }
 
 ///|
+/// Tries to extract stricken-through tokens from the `rev_toks` stack and collect them into `striken_toks`.
+/// If this function returns `Some((line_span, stricken_toks, closer))`, it means the stack has been modified.
 fn Parser::find_strikethrough_text(
   self : Parser,
-  toks : List[Token],
+  rev_toks : Ref[Array[Token]],
   start_line : LineSpan
-) ->
-     Result[
-       (List[Token], LineSpan, List[Token], TokenStrikethroughMarks),
-       List[Token],
-     ] {
-  loop toks, start_line, List::Nil {
-    Nil, _, acc => Err(acc.rev())
-    Cons(StrikethroughMarks(marks), toks), line, acc =>
-      if marks.may_close {
-        let to_last = marks.start - 1
-        let acc = tokens_rev_and_shorten_last_line(to_last~, Nil, acc)
-        Ok((toks, line, acc, marks))
-      } else if marks.may_open {
-        match self.try_strikethrough(toks, line, opener=marks) {
-          Err(toks) => continue toks, line, acc
-          Ok((toks, line)) => continue toks, line, acc
-        }
-      } else {
-        abort("unreachable")
+) -> (LineSpan, Array[Token], TokenStrikethroughMarks)? {
+  let acc = []
+  let mut line = start_line
+  while true {
+    match rev_toks.val.pop() {
+      None => {
+        rev_toks.val = acc..rev_inplace()
+        break
       }
-    Cons(Newline({ newline: l, .. }) | Inline({ endline: l, .. }) as t, toks),
-    _,
-    acc => continue toks, l, acc.add(t)
-    Cons(t, toks), line, acc => continue toks, line, acc.add(t)
+      Some(StrikethroughMarks(marks)) =>
+        if marks.may_close {
+          let to_last = marks.start - 1
+          tokens_shorten_last_line(to_last~, acc[:])
+          return Some((line, acc, marks))
+        } else if marks.may_open {
+          for l in self.try_strikethrough(rev_toks, line, opener=marks) {
+            line = l
+          }
+        } else {
+          abort("unreachable")
+        }
+      Some(Newline({ newline: l, .. }) | Inline({ endline: l, .. }) as t) => {
+        acc.push(t)
+        line = l
+      }
+      Some(t) => acc.push(t)
+    }
   }
+  None
 }
 
 ///|
+/// Tries to push a strikethrough to the `rev_toks` stack.
+/// If this function returns `Some(line_span)`, it means the stack has been modified.
 fn Parser::try_strikethrough(
   self : Parser,
-  start_toks : List[Token],
+  rev_toks : Ref[Array[Token]],
   start_line : LineSpan,
   opener~ : TokenStrikethroughMarks
-) -> Result[(List[Token], LineSpan), List[Token]] {
+) -> LineSpan? {
   let start = opener.start
-  guard self.cidx.has_strikethrough(after=start) else { Err(start_toks) }
-  guard let Ok((toks, line, striken_toks, closer)) = self.find_strikethrough_text(
-    start_toks, start_line,
+  guard self.cidx.has_strikethrough(after=start) else { None }
+  guard let Some((line, stricken_toks, closer)) = self.find_strikethrough_text(
+    rev_toks, start_line,
   ) else {
-    Err(e) => Err(e)
+    _ => None
   }
   let first_line = start_line
   let last_line = line
@@ -1299,51 +1342,56 @@ fn Parser::try_strikethrough(
       let last = if start_line == line { last } else { start_line.last }
       { ..start_line, first, last }
     }
-    let emph_toks = self.second_pass(striken_toks, text_start)
-    let text = self.last_pass(emph_toks, text_start)
+    let emph_toks = self.second_pass(stricken_toks[:], text_start)
+    let text = self.last_pass(emph_toks[:], text_start)
     self.inlines_inline(first~, last~, first_line~, last_line~, text)
   }
-  let toks = toks.add(
-    {
-      let first = opener.start
-      let last = closer.start + 1
-      self.ext_strikethough_token(first~, last~, first_line~, last_line~, text)
-    },
+  rev_toks.val.push(
+    self.ext_strikethough_token(
+      first=opener.start,
+      last=closer.start + 1,
+      first_line~,
+      last_line~,
+      text,
+    ),
   )
-  Ok((toks, line))
+  Some(line)
 }
 
 ///|
 fn Parser::second_pass(
   self : Parser,
-  toks : List[Token],
+  toks : ArrayView[Token],
   line : LineSpan
-) -> List[Token] {
-  loop toks, line, List::Nil {
-    Nil, _, acc => acc.rev()
-    Cons(EmphasisMarks(opener), toks), line, acc =>
-      if opener.may_open {
-        match self.try_emphasis(toks, line, opener~) {
-          Err(toks) => continue toks, line, acc
-          Ok((toks, line)) => continue toks, line, acc
+) -> Array[Token] {
+  let rev_toks = Ref::new(toks.iter().to_array()..rev_inplace())
+  let acc = []
+  let mut line_ = line
+  while true {
+    match rev_toks.val.pop() {
+      None => break
+      Some(EmphasisMarks(opener)) =>
+        if opener.may_open {
+          match self.try_emphasis(rev_toks, line_, opener~) {
+            None => continue
+            Some(line) => line_ = line
+          }
         }
-      } else {
-        continue toks, line, acc
-      }
-    Cons(StrikethroughMarks(opener), toks), line, acc =>
-      if opener.may_open {
-        match self.try_strikethrough(toks, line, opener~) {
-          Err(toks) => continue toks, line, acc
-          Ok((toks, line)) => continue toks, line, acc
+      Some(StrikethroughMarks(opener)) =>
+        if opener.may_open {
+          match self.try_strikethrough(rev_toks, line_, opener~) {
+            None => continue
+            Some(line) => line_ = line
+          }
         }
-      } else {
-        continue toks, line, acc
+      Some(Newline({ newline: l, .. }) | Inline({ endline: l, .. }) as t) => {
+        acc.push(t)
+        line_ = l
       }
-    Cons(Newline({ newline: l, .. }) | Inline({ endline: l, .. }) as t, toks),
-    _,
-    acc => continue toks, l, acc.add(t)
-    Cons(t, toks), line, acc => continue toks, line, acc.add(t)
+      Some(t) => acc.push(t)
+    }
   }
+  acc
 }
 
 // Last pass
@@ -1353,27 +1401,35 @@ fn Parser::second_pass(
 /// are created for data between them.
 fn Parser::last_pass(
   self : Parser,
-  toks : List[Token],
+  toks : ArrayView[Token],
   line : LineSpan
-) -> List[Inline] {
-  loop toks, line, List::Nil, line.first {
-    Nil, line, acc, k =>
-      self.try_add_text_inline(line, first=k, last=line.last, acc).rev()
-    Cons(Newline({ start, break_ty, newline }), toks), line, acc, k => {
-      let acc = self.try_add_text_inline(line, first=k, last=start - 1, acc)
-      let break_ = self.break_inline(line, start~, break_ty~, newline~)
-      continue toks, newline, acc.add(break_), newline.first
-    }
-    Cons(Inline({ start, inline, endline, next }), toks), line, acc, k => {
-      let acc = self.try_add_text_inline(line, first=k, last=start - 1, acc)
-      let acc = match inline {
-        Inlines({ v: is_, .. }) => is_.rev().rev_concat(acc)
-        i => acc.add(i)
+) -> Array[Inline] {
+  let acc = []
+  let mut line = line
+  let mut k = line.first
+  for tok in toks {
+    match tok {
+      Newline({ start, break_ty, newline }) => {
+        self.try_add_text_inline(line, first=k, last=start - 1, acc)
+        let break_ = self.break_inline(line, start~, break_ty~, newline~)
+        acc.push(break_)
+        line = newline
+        k = newline.first
       }
-      continue toks, endline, acc, next
+      Inline({ start, inline, endline, next }) => {
+        self.try_add_text_inline(line, first=k, last=start - 1, acc)
+        match inline {
+          Inlines({ v: is_, .. }) => acc.push_iter(is_.iter())
+          i => acc.push(i)
+        }
+        line = endline
+        k = next
+      }
+      _ => abort("unreachable")
     }
-    _, _, _, _ => abort("unreachable")
   }
+  self.try_add_text_inline(line, first=k, last=line.last, acc)
+  acc
 }
 
 ///|
@@ -1381,10 +1437,10 @@ fn Parser::parse_tokens(
   self : Parser,
   toks : List[Token],
   first_line : LineSpan
-) -> (List[Inline], Bool) {
+) -> (Array[Inline], Bool) {
   let (toks, had_link) = self.first_pass(toks, first_line)
   let toks = self.second_pass(toks, first_line)
-  let inlines = self.last_pass(toks, first_line)
+  let inlines = self.last_pass(toks.to_array()[:], first_line)
   (inlines, had_link)
 }
 
@@ -1426,7 +1482,7 @@ fn Parser::parse_inline(
   self.cidx = cidx
   let (is_, _) = self.parse_tokens(toks, first_line)
   let inline = match is_ {
-    Cons(i, Nil) => i
+    [i] => i
     _ => Inlines({ v: is_, meta })
   }
   (layout, inline)
@@ -1447,14 +1503,13 @@ fn Parser::get_blanks(
 }
 
 ///|
-fn Parser::make_col(self : Parser, is_ : List[Inline]) -> Inline {
+fn Parser::make_col(self : Parser, is_ : Array[Inline]) -> Inline {
   match is_ {
-    Nil => abort("unreachable")
-    Cons(i, Nil) => i
+    [] => abort("unreachable")
+    [i] => i
     is_ => {
-      let last = is_.unsafe_head().meta()
-      let is_ = is_.rev()
-      let first = is_.unsafe_head().meta()
+      let first = is_[0].meta()
+      let last = is_[is_.length() - 1].meta()
       let meta = self.meta_of_metas(first~, last~)
       Inlines({ v: is_, meta })
     }
@@ -1499,15 +1554,15 @@ fn Parser::start_col(
 ) -> StartColResult {
   let (bbefore, k) = self.get_blanks(line, before~, k)
   if k >= before {
-    return Start(bbefore, Nil)
+    return Start(bbefore, [])
   }
   match self.find_pipe(line, before~, k) {
-    Err(text) => Start(bbefore, List::of([text]))
+    Err(text) => Start(bbefore, [text])
     Ok((text, bafter, k)) => {
       let text = text.or_else(
         fn() {
           let l = self.text_loc_of_span({ ..line, first: k, last: k - 1 })
-          Inlines({ v: Nil, meta: self.meta(l) })
+          Inlines({ v: [], meta: self.meta(l) })
         },
       )
       Col((text, (bbefore, bafter)), k)
@@ -1518,39 +1573,42 @@ fn Parser::start_col(
 ///|
 enum StartColResult {
   Col((Inline, TableCellLayout), BytePos)
-  Start(String, List[Inline])
-} derive(Show, FromJson, ToJson)
+  Start(String, Array[Inline])
+} derive(Show, ToJson)
 
 ///|
 fn Parser::finish_col(
   self : Parser,
   line : LineSpan,
   blanks_before : String,
-  is_ : List[Inline],
-  toks : List[Token],
+  is_ : ArrayView[Inline],
+  toks : ArrayView[Token],
   k : BytePos
-) -> ((Inline, TableCellLayout), List[Token], BytePos) {
+) -> ((Inline, TableCellLayout), ArrayView[Token], BytePos) {
+  let is_ = is_.iter().to_array()
   match toks {
-    Nil => {
+    [] => {
       guard let Ok((text, after, k)) = self.find_pipe(
         line,
         before=line.last + 1,
         k,
       )
-      let is_ = text.map_or(is_, fn(t) { is_.add(t) })
-      ((self.make_col(is_), (blanks_before, after)), Nil, k)
+      is_.push_iter(text.iter())
+      ((self.make_col(is_), (blanks_before, after)), [][:], k)
     }
-    Cons(Inline({ start, inline, next, .. }), toks) as toks1 => {
+    [Inline({ start, inline, next, .. }), .. as toks] as toks1 => {
       if k >= start {
-        return self.finish_col(line, blanks_before, is_.add(inline), toks, next)
+        let is_ = is_ + [inline]
+        return self.finish_col(line, blanks_before, is_[:], toks, next)
       }
       match self.find_pipe(line, before=start, k) {
         Err(text) => {
-          let is_ = is_.add(text).add(inline)
-          self.finish_col(line, blanks_before, is_, toks, next)
+          is_.push(text)
+          is_.push(inline)
+          self.finish_col(line, blanks_before, is_[:], toks, next)
         }
         Ok((text, after, k)) => {
-          let is_ = text.map_or(is_, fn(t) { is_.add(t) })
+          is_.push_iter(text.iter())
           ((self.make_col(is_), (blanks_before, after)), toks1, k)
         }
       }
@@ -1563,28 +1621,33 @@ fn Parser::finish_col(
 fn Parser::parse_cols(
   self : Parser,
   line : LineSpan,
-  acc : List[(Inline, TableCellLayout)],
-  toks : List[Token],
+  acc : Array[(Inline, TableCellLayout)],
+  toks : ArrayView[Token],
   k : BytePos
-) -> List[(Inline, TableCellLayout)] {
-  match toks {
-    Nil => {
+) -> Unit {
+  loop line, toks, k {
+    line, [], k => {
       if k > line.last {
-        return acc.rev()
+        break
       }
       guard let Col(col, k) = self.start_col(line, before=line.last + 1, k)
-      self.parse_cols(line, acc.add(col), Nil, k)
+      acc.push(col)
+      continue line, [][:], k
     }
-    Cons(Inline({ start, inline, next, .. }), toks) as toks1 =>
+    line, [Inline({ start, inline, next, .. }), .. as toks] as toks1, k =>
       match self.start_col(line, before=start, k) {
-        Col(col, k) => self.parse_cols(line, acc.add(col), toks1, k)
+        Col(col, k) => {
+          acc.push(col)
+          continue line, toks1, k
+        }
         Start(before, is_) => {
-          let is_ = is_.add(inline)
-          let (col, toks, k) = self.finish_col(line, before, is_, toks, next)
-          self.parse_cols(line, acc.add(col), toks, k)
+          let is_ = is_ + [inline]
+          let (col, toks, k) = self.finish_col(line, before, is_[:], toks, next)
+          acc.push(col)
+          continue line, toks, k
         }
       }
-    _ => abort("unreachable")
+    _, _, _ => abort("unreachable")
   }
 }
 
@@ -1592,17 +1655,19 @@ fn Parser::parse_cols(
 fn Parser::parse_table_row(
   self : Parser,
   line : LineSpan
-) -> List[(Inline, TableCellLayout)] {
+) -> Array[(Inline, TableCellLayout)] {
   let (cidx, toks, first_line) = tokenize(
     self.i,
     List::of([line]),
     exts=self.exts,
   )
   self.cidx = cidx
-  let (toks, _had_link) = self.first_pass(toks, first_line)
-  let toks = self.second_pass(toks, first_line)
+  let (toks, _had_link) = self.first_pass(toks.to_array()[:], first_line)
+  let toks = self.second_pass(toks[:], first_line)
   // We now have modified last pass, inner inlines will have gone through
   // the regular `last_pass` which is fine since we are only interested
   // in creating the toplevel text nodes further splited on (unescaped) `\`.
-  self.parse_cols(line, Nil, toks, line.first)
+  let rows = []
+  self.parse_cols(line, rows, toks[:], line.first)
+  rows
 }

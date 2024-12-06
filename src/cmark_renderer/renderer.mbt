@@ -33,14 +33,14 @@ pub fn Renderer::compose(self : Renderer, other : Renderer) -> Renderer {
 ///|
 pub(all) struct Context {
   renderer : Renderer
-  state : Dict
+  mut state : Error?
   b : Buffer
   mut doc : Doc
 }
 
 ///|
 pub fn Context::new(renderer : Renderer, b : Buffer) -> Context {
-  { renderer, state: Map::new(), b, doc: Doc::empty() }
+  { renderer, state: None, b, doc: Doc::empty() }
 }
 
 ///|
@@ -59,11 +59,6 @@ pub(all) typealias BlockFn = (Context, Block) -> Bool!
 
 ///|
 pub(all) typealias DocFn = (Context, Doc) -> Bool!
-
-///|
-pub fn Context::byte(self : Context, byte : Byte) -> Unit {
-  self.b.write_byte(byte)
-}
 
 ///|
 pub fn Context::char(self : Context, ch : Char) -> Unit {
@@ -108,7 +103,7 @@ pub fn Context::doc!(self : Context, doc : Doc) -> Unit {
 pub fn Renderer::doc_to_string!(self : Renderer, doc : Doc) -> String {
   let buf = Buffer::new(size_hint=1024)
   self.buffer_add_doc!(buf, doc)
-  buf.to_unchecked_string()
+  buf.to_string()
 }
 
 ///|

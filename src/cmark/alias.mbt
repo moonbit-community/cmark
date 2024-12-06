@@ -2,7 +2,7 @@
 typealias List[A] = @immut/list.T[A]
 
 ///|
-typealias Buffer = @buffer.T
+typealias Buffer = StringBuilder
 
 ///|
 typealias Indent = @cmark_base.Indent
@@ -32,7 +32,13 @@ typealias Span = @cmark_base.Span
 typealias LineSpan = @cmark_base.LineSpan
 
 ///|
-typealias RevSpans = @cmark_base.RevSpans
+pub(all) typealias RevSpans = List[Span]
+
+///|
+pub(all) typealias RevTokens = Array[Token]
+
+///|
+pub(all) typealias RevTokensView = ArrayView[Token]
 
 ///|
 typealias HeadingLevel = @cmark_base.HeadingLevel

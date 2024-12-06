@@ -13,7 +13,7 @@ pub(all) enum Block {
   ExtMathBlock(Node[CodeBlock])
   ExtTable(Node[Table])
   ExtFootnoteDefinition(Node[Footnote])
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub fn Block::empty() -> Block {
@@ -99,7 +99,7 @@ pub(all) struct BlockQuote {
   indent : Indent
   /// The quoted block.
   block : Block
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub fn BlockQuote::new(indent~ : Int = 0, block : Block) -> BlockQuote {
@@ -125,20 +125,20 @@ pub(all) struct CodeBlock {
   layout : CodeBlockLayout
   info_string : StringNode?
   code : List[StringNode]
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub(all) enum CodeBlockLayout {
   Indented
   Fenced(CodeBlockFencedLayout)
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub(all) struct CodeBlockFencedLayout {
   indent : Indent
   opening_fence : StringNode
   closing_fence : StringNode?
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub fn CodeBlockFencedLayout::default() -> CodeBlockFencedLayout {
@@ -159,8 +159,7 @@ pub fn CodeBlock::new(
   { layout, info_string, code }
 }
 
-// [make_fence cb] is a fence character and count suitable for [cb].
-///|
+///| [make_fence cb] is a fence character and count suitable for [cb].
 pub fn CodeBlock::make_fence(self : CodeBlock) -> (Char, Count) {
   let ch = match self.info_string {
     Some(info) => if info.v.contains_char('`') { '~' } else { '`' }
@@ -180,9 +179,8 @@ pub fn CodeBlock::make_fence(self : CodeBlock) -> (Char, Count) {
   (ch, InlineCodeSpan::min_backticks(min=3, counts))
 }
 
-// [language_of_info_string s] extracts a (non-empty) language, the first word of [s] and a trimmed remainder.
-// Assumes [s] is {!String.trim}ed which is what {!info_string} gives you.
-///|
+///| [language_of_info_string s] extracts a (non-empty) language, the first word of [s] and a trimmed remainder.
+/// Assumes [s] is {!String.trim}ed which is what {!info_string} gives you.
 pub fn CodeBlock::language_of_info_string(s : String) -> (String, String)? {
   if s.is_empty() {
     return None
@@ -217,13 +215,13 @@ pub(all) struct BlockHeading {
   level : Int
   inline : Inline
   id : BlockHeadingId?
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub(all) enum BlockHeadingLayout {
   Atx(BlockHeadingAtxLayout)
   Setext(BlockHeadingSetextLayout)
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub(all) struct BlockHeadingAtxLayout {
@@ -244,7 +242,7 @@ pub(all) struct BlockHeadingSetextLayout {
   underline_indent : Indent
   underline_count : Node[Count]
   underline_blanks : Blanks
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub(all) enum BlockHeadingId {
@@ -263,7 +261,7 @@ pub fn BlockHeading::new(
 }
 
 ///| The type for [HTML blocks](https://spec.commonmark.org/0.30/#html-blocks).
-pub(all) type HtmlBlock List[StringNode] derive(Show, FromJson, ToJson)
+pub(all) type HtmlBlock List[StringNode] derive(Show, ToJson)
 
 ///|
 pub(all) struct ListItem {
@@ -272,7 +270,7 @@ pub(all) struct ListItem {
   after_marker : Indent
   block : Block
   ext_task_marker : Node[Char]?
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub(all) typealias ListItemBlock = ListItem
@@ -321,7 +319,7 @@ pub(all) struct BlockList {
   ty : ListType
   tight : Bool
   items : List[Node[ListItem]]
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub fn BlockList::map_items(
@@ -341,7 +339,7 @@ pub(all) struct BlockParagraph {
   leading_indent : Indent
   inline : Inline
   trailing_blanks : Blanks
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub fn BlockParagraph::new(
@@ -374,7 +372,7 @@ pub(all) struct Footnote {
   label : Label
   defined_label : Label?
   block : Block
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub fn Footnote::new(
@@ -409,7 +407,7 @@ pub(all) struct Table {
   indent : Indent
   col_count : Count
   rows : List[(Node[TableRow], Blanks)]
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub(all) enum TableAlign {
@@ -423,7 +421,7 @@ pub(all) enum TableRow {
   Header(List[(Inline, TableCellLayout)])
   Sep(List[Node[TableSep]])
   Data(List[(Inline, TableCellLayout)])
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 pub(all) typealias TableSep = (TableAlign?, Count)

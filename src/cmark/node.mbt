@@ -35,19 +35,6 @@ pub impl[A : ToJson] ToJson for Node[A] with to_json(self) {
 }
 
 ///|
-pub impl[A : @json.FromJson] @json.FromJson for Node[A] with from_json(
-  json,
-  path
-) {
-  match json {
-    Array([v]) => Node::new(@json.from_json!(v, path~))
-    Array([v, meta]) =>
-      Node::new(@json.from_json!(v, path~), meta=@json.from_json!(meta, path~))
-    _ => raise @json.JsonDecodeError((path, "expected array of length 1 or 2"))
-  }
-}
-
-///|
 pub(all) typealias StringNode = Node[String]
 
 ///|
