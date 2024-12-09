@@ -120,7 +120,7 @@ pub fn utf_16_clean_raw(
       last, start, k => {
         if k > last {
           flush(last, start, k)
-          break buf.to_unchecked_string()
+          break buf.to_string()
         }
         if s[k] == '\x00' {
           let next = k + 1
@@ -148,25 +148,27 @@ pub fn utf_16_clean_raw(
   }
 
   fn check(last, first, k) {
-    if k > last {
-      return s.substring(start=first, end=last + 1)
-    }
-    if s[k] == '\x00' {
-      buf.reset()
-      return clean(last, first, k)
-    }
-    if is_ascii(s[k]) {
-      return check(last, first, k + 1)
-    }
-    match at_checked(s, k) {
-      Ok(d) => {
-        let next = k + length_utf16(d)
-        check(last, first, next)
-      }
-      Err(_d) => {
-        buf.reset()
-        clean(last, first, k)
-      }
+    loop last, first, k {
+      last, first, k =>
+        if k > last {
+          s.substring(start=first, end=last + 1)
+        } else if s[k] == '\x00' {
+          buf.reset()
+          clean(last, first, k)
+        } else if is_ascii(s[k]) {
+          continue last, first, k + 1
+        } else {
+          match at_checked(s, k) {
+            Ok(d) => {
+              let next = k + length_utf16(d)
+              continue last, first, next
+            }
+            Err(_d) => {
+              buf.reset()
+              clean(last, first, k)
+            }
+          }
+        }
     }
   }
 
@@ -176,7 +178,7 @@ pub fn utf_16_clean_raw(
     }
     buf.reset()
     pad_it()
-    return buf.to_unchecked_string()
+    return buf.to_string()
   }
   let max = s.length() - 1
   let last = @math.minimum(last, max)
@@ -307,7 +309,7 @@ fn _utf_16_clean_unesc_unref(
   fn resolve(last, start, k) {
     if k > last {
       flush(last, start, k)
-      return buf.to_unchecked_string()
+      return buf.to_string()
     }
     let next = k + 1
     match (s[k], do_unesc) {

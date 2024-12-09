@@ -1,8 +1,5 @@
 ///|
-typealias Buffer = @buffer.T
-
-///|
-typealias Dict = @cmark_base.Dict
+typealias Buffer = StringBuilder
 
 ///|
 typealias Inline = @cmark.Inline

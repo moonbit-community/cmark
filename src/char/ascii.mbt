@@ -23,12 +23,12 @@ pub fn to_ascii_upper(c : Char) -> Char {
 
 ///|
 pub fn is_ascii_blank(c : Char) -> Bool {
-  " \t".contains_char(c)
+  c == ' ' || c == '\t'
 }
 
 ///|
 pub fn is_ascii_whitespace(c : Char) -> Bool {
-  " \t\x0A\x0B\x0C\x0D".contains_char(c)
+  c == ' ' || c == '\x0A' || c == '\x0B' || c == '\x0C' || c == '\x0D'
 }
 
 ///|

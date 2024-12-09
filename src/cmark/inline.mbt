@@ -8,18 +8,18 @@ pub(all) enum Inline {
   CodeSpan(Node[InlineCodeSpan])
   Emphasis(Node[InlineEmphasis])
   Image(Node[InlineLink])
-  Inlines(Node[List[Inline]])
+  Inlines(Node[Array[Inline]])
   Link(Node[InlineLink])
   RawHtml(Node[InlineRawHtml])
   StrongEmphasis(Node[InlineEmphasis])
   Text(Node[InlineText])
   ExtStrikethrough(Node[InlineStrikethrough])
   ExtMathSpan(Node[InlineMathSpan])
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn Inline::empty() -> Inline {
-  Inlines({ v: Nil, meta: Meta::none() })
+  Inlines({ v: [], meta: Meta::none() })
 }
 
 ///|
@@ -69,7 +69,7 @@ pub fn Inline::normalize(self : Inline) -> Inline {
     | CodeSpan(_)
     | RawHtml(_)
     | Text(_)
-    | Inlines({ v: Nil, .. })
+    | Inlines({ v: [], .. })
     | ExtMathSpan(_) as i => i
     Image({ v: raw, meta }) =>
       Image({ v: { ..raw, text: raw.text.normalize() }, meta })
@@ -81,26 +81,30 @@ pub fn Inline::normalize(self : Inline) -> Inline {
       StrongEmphasis({ v: { ..raw, inline: raw.inline.normalize() }, meta })
     ExtStrikethrough({ v: raw, meta }) =>
       ExtStrikethrough({ v: raw._.normalize(), meta })
-    Inlines({ v: Cons(i, Nil), .. }) => i
-    Inlines({ v: Cons(i, is_), meta }) => {
-      let is_ = loop List::of([i.normalize()]), is_ {
-        acc, Cons(Inlines({ v: is1, .. }), is_) =>
-          continue acc, is1.rev().rev_concat(is_)
-        acc, Cons(Text({ v: t1, meta: meta1 }) as i1, is_) =>
-          match acc {
-            Cons(Text({ v: t, meta }), acc) => {
-              let i = Text(
-                { v: t + t1, meta: { ..meta, loc: meta.loc.span(meta1.loc) } },
-              )
-              continue acc.add(i), is_
+    Inlines({ v: [i], .. }) => i
+    Inlines({ v: [i, .. as is_], meta }) => {
+      let acc = [i.normalize()]
+      let is_ = Array::from_iter(is_.iter())
+      while true {
+        guard let Some(curr) = is_.pop() else { _ => break }
+        match curr {
+          Inlines({ v: is1, .. }) =>
+            for i1 in is1.rev() {
+              is_.push(i1)
             }
-            _ => continue acc.add(i1.normalize()), is_
-          }
-        acc, Cons(i, is_) => continue acc.add(i.normalize()), is_
-        acc, Nil => break acc.rev()
+          Text({ v: t1, meta: meta1 }) as i1 =>
+            match acc {
+              [.., Text({ v: t, meta })] =>
+                acc[acc.length() - 1] = Text(
+                  { v: t + t1, meta: { ..meta, loc: meta.loc.span(meta1.loc) } },
+                )
+              _ => acc.push(i1.normalize())
+            }
+          i => acc.push(i.normalize())
+        }
       }
-      match is_ {
-        Cons(i, Nil) => i
+      match acc {
+        [i] => i
         is_ => Inlines({ v: is_, meta })
       }
     }
@@ -114,34 +118,38 @@ pub fn Inline::normalize(self : Inline) -> Inline {
 pub fn Inline::to_plain_text(
   self : Inline,
   break_on_soft~ : Bool
-) -> List[List[String]] {
-  let push = fn(s, acc : List[List[_]]) {
-    acc.tail().add(acc.unsafe_head().add(s))
+) -> Array[Array[String]] {
+  let acc = [[]]
+  let push = fn(s) { acc[acc.length() - 1].push(s) }
+  let newline = fn() { acc.push([]) }
+  let st = [self]
+  while true {
+    guard let Some(curr) = st.pop() else { _ => break }
+    match curr {
+      Autolink(a) => push("<\{a.v.link.v}>")
+      Break({ v: { ty: Hard, .. }, .. }) => newline()
+      Break({ v: { ty: Soft, .. }, .. }) =>
+        if break_on_soft {
+          newline()
+        } else {
+          push(" ")
+        }
+      CodeSpan(cs) => push(cs.v.code())
+      Emphasis({ v: { inline, .. }, .. })
+      | StrongEmphasis({ v: { inline, .. }, .. }) => st.push(inline)
+      Inlines({ v: is1, .. }) =>
+        for i in is1.rev() {
+          st.push(i)
+        }
+      Link(l) => st.push(l.v.text)
+      RawHtml(_) => ()
+      Text(t) => push(t.v)
+      ExtStrikethrough(i) => st.push(i.v._)
+      ExtMathSpan(m) => push(m.v.tex())
+      i => st.push(i)
+    }
   }
-  let newline = fn(acc : List[List[_]]) {
-    acc.tail().add(acc.unsafe_head().rev()).add(Nil)
-  }
-  loop List::of([List::Nil]), List::of([self]) {
-    acc, Cons(Autolink(a), is_) => continue push("<\{a.v.link.v}>", acc), is_
-    acc, Cons(Break({ v: { ty: Hard, .. }, .. }), is_) =>
-      continue newline(acc), is_
-    acc, Cons(Break({ v: { ty: Soft, .. }, .. }), is_) =>
-      continue if break_on_soft { newline(acc) } else { push(" ", acc) }, is_
-    acc, Cons(CodeSpan(cs), is_) => continue push(cs.v.code(), acc), is_
-    acc,
-    Cons(Emphasis({ v: { inline, .. }, .. }), is_)
-    | Cons(StrongEmphasis({ v: { inline, .. }, .. }), is_) =>
-      continue acc, Cons(inline, is_)
-    acc, Cons(Inlines({ v: is1, .. }), is_) =>
-      continue acc, is1.rev().rev_concat(is_)
-    acc, Cons(Link(l), is_) => continue acc, Cons(l.v.text, is_)
-    acc, Cons(RawHtml(_), is_) => continue acc, is_
-    acc, Cons(Text(t), is_) => continue push(t.v, acc), is_
-    acc, Cons(ExtStrikethrough(i), is_) => continue acc, Cons(i.v._, is_)
-    acc, Cons(ExtMathSpan(m), is_) => continue push(m.v.tex(), acc), is_
-    acc, Cons(i, is_) => continue acc, Cons(i, is_)
-    acc, Nil => acc.tail().add(acc.unsafe_head().rev()).rev()
-  }
+  acc
 }
 
 ///|
@@ -150,18 +158,18 @@ pub fn Inline::id(
   buf~ : Buffer = Buffer::new(size_hint=256)
 ) -> String {
   let text = self.to_plain_text(break_on_soft=false)
-  let s = text.map(fn(it) { String::concat(it.to_array()) }).to_array()
+  let s = text.map(fn(l) { String::concat(l) })
     |> String::concat(separator="\n")
   // Collapses non initial white 
   let collapse_blanks = fn(prev) {
-    if @char.is_ascii_blank(prev) && buf.is_empty().not() {
+    if @char.is_ascii_blank(prev) && buf.to_string().is_empty().not() { // TODO: Replace with StringBuilder::is_empty()
       buf.write_char('-')
     }
   }
   loop buf, s, s.length() - 1, '\x00', 0 {
     b, s, max, prev, k => {
       if k > max {
-        break buf.to_unchecked_string()
+        break buf.to_string()
       }
       match s[k] {
         ' ' | '\t' as prev_byte => continue b, s, max, prev_byte, k + 1
@@ -198,7 +206,7 @@ pub(all) struct InlineAutolink {
   /// https://spec.commonmark.org/0.30/#absolute-uri
   /// https://spec.commonmark.org/0.30/#email-address
   link : StringNode
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn InlineAutolink::new(link : StringNode) -> InlineAutolink {
@@ -211,7 +219,7 @@ pub(all) struct InlineBreak {
   layout_before : BlanksNode
   ty : InlineBreakType
   layout_after : BlanksNode
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn InlineBreak::new(
@@ -232,7 +240,7 @@ pub(all) enum InlineBreakType {
 pub(all) struct InlineCodeSpan {
   backticks : Count
   code_layout : List[Tight]
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn InlineCodeSpan::new(
@@ -319,7 +327,7 @@ pub fn InlineCodeSpan::code(self : InlineCodeSpan) -> String {
 pub(all) struct InlineEmphasis {
   delim : Char
   inline : Inline
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn InlineEmphasis::new(
@@ -333,7 +341,7 @@ pub fn InlineEmphasis::new(
 pub(all) struct InlineLink {
   text : Inline
   reference : ReferenceKind
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub(all) enum ReferenceKind {
@@ -342,7 +350,7 @@ pub(all) enum ReferenceKind {
   /// https://spec.commonmark.org/0.30/#reference-link
   /// First label is the label of the reference, second label is the label of the referenced definition.
   Ref(ReferenceLayout, Label, Label)
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 // The type for reference link layouts.
 ///|
@@ -411,7 +419,7 @@ pub fn InlineLink::is_unsafe(l : String) -> Bool {
 }
 
 ///| The type for [inline raw HTML](https://spec.commonmark.org/0.30/#raw-html) (can span multiple lines).
-pub(all) type InlineRawHtml List[Tight] derive(Eq, Show, FromJson, ToJson)
+pub(all) type InlineRawHtml List[Tight] derive(Eq, Show, ToJson)
 
 ///| The type for [textual content](https://spec.commonmark.org/0.30/#textual-content).
 ///
@@ -423,13 +431,13 @@ pub(all) typealias InlineText = String
 // Extensions
 
 ///|
-pub(all) type InlineStrikethrough Inline derive(Eq, Show, FromJson, ToJson)
+pub(all) type InlineStrikethrough Inline derive(Eq, Show, ToJson)
 
 ///|
 pub(all) struct InlineMathSpan {
   display : Bool
   tex_layout : List[Tight]
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn tex(self : InlineMathSpan) -> String {

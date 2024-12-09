@@ -9,7 +9,7 @@ pub(all) struct LinkDefinition {
   defined_label : Label?
   dest : StringNode?
   title : List[Tight]?
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn LinkDefinition::new(
@@ -30,7 +30,7 @@ pub(all) struct LinkDefinitionLayout {
   after_dest : List[BlockLineBlank]
   title_open_delim : Char
   after_title : List[BlockLineBlank]
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn LinkDefinitionLayout::default() -> LinkDefinitionLayout {

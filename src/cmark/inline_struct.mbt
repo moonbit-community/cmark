@@ -436,17 +436,17 @@ fn Parser::try_add_text_inline(
   line : LineSpan,
   first~ : Int,
   last~ : Int,
-  acc : List[Inline]
-) -> List[Inline] {
+  acc : Array[Inline]
+) -> Unit {
   if first > last {
-    return acc
+    return
   }
   let first = if first == line.first {
     self.first_non_blank_in_span(line) // Strip leading blanks
   } else {
     first
   }
-  acc.add(Text(self.clean_unesc_unref_span({ ..line, first, last })))
+  acc.push(Text(self.clean_unesc_unref_span({ ..line, first, last })))
 }
 
 ///|
@@ -456,10 +456,10 @@ fn Parser::inlines_inline(
   last~ : BytePos,
   first_line~ : LineSpan,
   last_line~ : LineSpan,
-  acc : List[Inline]
+  acc : Array[Inline]
 ) -> Inline {
   match acc {
-    Cons(i, Nil) => i
+    [i] => i
     is_ => {
       let text_loc = self.text_loc_of_lines(
         first~,
@@ -719,7 +719,9 @@ fn Parser::try_autolink_or_html(
   }
   let first = start
   let first_line = line
-  let t = self.raw_html_token(first~, last~, first_line~, last_line~, spans)
+  // TODO: Replace this with arrays.
+  let rev_spans = List::from_array(spans.rev())
+  let t = self.raw_html_token(first~, last~, first_line~, last_line~, rev_spans)
   let toks = tokens_drop_until(start=last + 1, toks)
   Some((toks, last_line, t))
 }
@@ -759,7 +761,9 @@ fn Parser::try_full_reflink_remainder(
     start~,
   ).map(
     fn {
-      (toks, line, rev_spans, last, key) => {
+      (toks, line, spans, last, key) => {
+        // TODO: Replace this with arrays.
+        let rev_spans = List::from_array(spans.rev())
         let ref_ = self.label_of_rev_spans(key~, rev_spans)
         let toks = tokens_drop_stop_after_right_brack(toks)
         self
@@ -781,7 +785,7 @@ fn Parser::try_shortcut_reflink(
   start~ : BytePos
 ) -> (List[Token], LineSpan, ReferenceKind, BytePos)? {
   let start = start + image.to_int() // [
-  guard let Some((toks, line, rev_spans, last, key)) = @cmark_base.link_label(
+  guard let Some((toks, line, spans, last, key)) = @cmark_base.link_label(
     self.buf,
     next_line=tokens_next_line,
     self.i,
@@ -791,6 +795,8 @@ fn Parser::try_shortcut_reflink(
   ) else {
     _ => return None
   }
+  // TODO: Replace this with arrays.
+  let rev_spans = List::from_array(spans.rev())
   let ref_ = self.label_of_rev_spans(key~, rev_spans)
   let toks = tokens_drop_stop_after_right_brack(toks)
   self
@@ -807,7 +813,7 @@ fn Parser::try_collapsed_reflink(
   start~ : BytePos
 ) -> (List[Token], LineSpan, ReferenceKind, BytePos)? {
   let start = start + image.to_int() // [
-  guard let Some((toks, line, rev_spans, last, key)) = @cmark_base.link_label(
+  guard let Some((toks, line, spans, last, key)) = @cmark_base.link_label(
     self.buf,
     next_line=tokens_next_line,
     self.i,
@@ -817,6 +823,8 @@ fn Parser::try_collapsed_reflink(
   ) else {
     _ => return None
   }
+  // TODO: Replace this with arrays.
+  let rev_spans = List::from_array(spans.rev())
   let ref_ = self.label_of_rev_spans(key~, rev_spans)
   let last = last + 2 // ][]
   let toks = tokens_drop_stop_after_right_brack(toks)
@@ -871,7 +879,9 @@ fn Parser::try_inline_link_remainder(
             start~,
           ) {
           None => (toks, line, after_dest, '"', None, start)
-          Some((toks, line, rev_spans, last)) => {
+          Some((toks, line, spans, last)) => {
+            // TODO: Replace this with arrays.
+            let rev_spans = List::from_array(spans.rev())
             let title = self.tight_block_lines(rev_spans~)
             (toks, line, after_dest, self.i[start], Some(title), last + 1)
           }
@@ -1009,7 +1019,7 @@ fn Parser::try_link_def(
     last=text_last,
     first_line=start_line,
     last_line=line,
-    text,
+    text.to_array(),
   )
   let link : InlineLink = { text, reference }
   let t = self.link_token(
@@ -1068,7 +1078,7 @@ fn Parser::try_link(
     line~,
     text_last~,
     image~,
-    text,
+    List::from_array(text),
   )
 }
 
@@ -1209,7 +1219,7 @@ fn Parser::try_emphasis(
   let emph = {
     let last = if start_line == line { text_last } else { start_line.last }
     let text_start = { ..start_line, first: text_first, last }
-    let emph_toks = self.second_pass(emph_toks, text_start)
+    let emph_toks = self.second_pass(emph_toks, text_start).to_array()
     let text = self.last_pass(emph_toks, text_start)
     self.inlines_inline(first~, last=text_last, first_line~, last_line~, text)
   }
@@ -1299,7 +1309,7 @@ fn Parser::try_strikethrough(
       let last = if start_line == line { last } else { start_line.last }
       { ..start_line, first, last }
     }
-    let emph_toks = self.second_pass(striken_toks, text_start)
+    let emph_toks = self.second_pass(striken_toks, text_start).to_array()
     let text = self.last_pass(emph_toks, text_start)
     self.inlines_inline(first~, last~, first_line~, last_line~, text)
   }
@@ -1353,27 +1363,35 @@ fn Parser::second_pass(
 /// are created for data between them.
 fn Parser::last_pass(
   self : Parser,
-  toks : List[Token],
+  toks : Array[Token],
   line : LineSpan
-) -> List[Inline] {
-  loop toks, line, List::Nil, line.first {
-    Nil, line, acc, k =>
-      self.try_add_text_inline(line, first=k, last=line.last, acc).rev()
-    Cons(Newline({ start, break_ty, newline }), toks), line, acc, k => {
-      let acc = self.try_add_text_inline(line, first=k, last=start - 1, acc)
-      let break_ = self.break_inline(line, start~, break_ty~, newline~)
-      continue toks, newline, acc.add(break_), newline.first
-    }
-    Cons(Inline({ start, inline, endline, next }), toks), line, acc, k => {
-      let acc = self.try_add_text_inline(line, first=k, last=start - 1, acc)
-      let acc = match inline {
-        Inlines({ v: is_, .. }) => is_.rev().rev_concat(acc)
-        i => acc.add(i)
+) -> Array[Inline] {
+  let acc = []
+  let mut line = line
+  let mut k = line.first
+  for tok in toks {
+    match tok {
+      Newline({ start, break_ty, newline }) => {
+        self.try_add_text_inline(line, first=k, last=start - 1, acc)
+        let break_ = self.break_inline(line, start~, break_ty~, newline~)
+        acc.push(break_)
+        line = newline
+        k = newline.first
       }
-      continue toks, endline, acc, next
+      Inline({ start, inline, endline, next }) => {
+        self.try_add_text_inline(line, first=k, last=start - 1, acc)
+        match inline {
+          Inlines({ v: is_, .. }) => acc.push_iter(is_.iter())
+          i => acc.push(i)
+        }
+        line = endline
+        k = next
+      }
+      _ => abort("unreachable")
     }
-    _, _, _, _ => abort("unreachable")
   }
+  self.try_add_text_inline(line, first=k, last=line.last, acc)
+  acc
 }
 
 ///|
@@ -1381,10 +1399,10 @@ fn Parser::parse_tokens(
   self : Parser,
   toks : List[Token],
   first_line : LineSpan
-) -> (List[Inline], Bool) {
+) -> (Array[Inline], Bool) {
   let (toks, had_link) = self.first_pass(toks, first_line)
   let toks = self.second_pass(toks, first_line)
-  let inlines = self.last_pass(toks, first_line)
+  let inlines = self.last_pass(toks.to_array(), first_line)
   (inlines, had_link)
 }
 
@@ -1426,7 +1444,7 @@ fn Parser::parse_inline(
   self.cidx = cidx
   let (is_, _) = self.parse_tokens(toks, first_line)
   let inline = match is_ {
-    Cons(i, Nil) => i
+    [i] => i
     _ => Inlines({ v: is_, meta })
   }
   (layout, inline)
@@ -1447,14 +1465,13 @@ fn Parser::get_blanks(
 }
 
 ///|
-fn Parser::make_col(self : Parser, is_ : List[Inline]) -> Inline {
+fn Parser::make_col(self : Parser, is_ : Array[Inline]) -> Inline {
   match is_ {
-    Nil => abort("unreachable")
-    Cons(i, Nil) => i
+    [] => abort("unreachable")
+    [i] => i
     is_ => {
-      let last = is_.unsafe_head().meta()
-      let is_ = is_.rev()
-      let first = is_.unsafe_head().meta()
+      let first = is_[0].meta()
+      let last = is_[is_.length() - 1].meta()
       let meta = self.meta_of_metas(first~, last~)
       Inlines({ v: is_, meta })
     }
@@ -1499,15 +1516,15 @@ fn Parser::start_col(
 ) -> StartColResult {
   let (bbefore, k) = self.get_blanks(line, before~, k)
   if k >= before {
-    return Start(bbefore, Nil)
+    return Start(bbefore, [])
   }
   match self.find_pipe(line, before~, k) {
-    Err(text) => Start(bbefore, List::of([text]))
+    Err(text) => Start(bbefore, [text])
     Ok((text, bafter, k)) => {
       let text = text.or_else(
         fn() {
           let l = self.text_loc_of_span({ ..line, first: k, last: k - 1 })
-          Inlines({ v: Nil, meta: self.meta(l) })
+          Inlines({ v: [], meta: self.meta(l) })
         },
       )
       Col((text, (bbefore, bafter)), k)
@@ -1518,15 +1535,15 @@ fn Parser::start_col(
 ///|
 enum StartColResult {
   Col((Inline, TableCellLayout), BytePos)
-  Start(String, List[Inline])
-} derive(Show, FromJson, ToJson)
+  Start(String, Array[Inline])
+} derive(Show, ToJson)
 
 ///|
 fn Parser::finish_col(
   self : Parser,
   line : LineSpan,
   blanks_before : String,
-  is_ : List[Inline],
+  is_ : Array[Inline],
   toks : List[Token],
   k : BytePos
 ) -> ((Inline, TableCellLayout), List[Token], BytePos) {
@@ -1537,20 +1554,21 @@ fn Parser::finish_col(
         before=line.last + 1,
         k,
       )
-      let is_ = text.map_or(is_, fn(t) { is_.add(t) })
+      let is_ = is_ + text.iter().to_array()
       ((self.make_col(is_), (blanks_before, after)), Nil, k)
     }
     Cons(Inline({ start, inline, next, .. }), toks) as toks1 => {
       if k >= start {
-        return self.finish_col(line, blanks_before, is_.add(inline), toks, next)
+        let is_ = is_ + [inline]
+        return self.finish_col(line, blanks_before, is_, toks, next)
       }
       match self.find_pipe(line, before=start, k) {
         Err(text) => {
-          let is_ = is_.add(text).add(inline)
+          let is_ = is_ + [text, inline]
           self.finish_col(line, blanks_before, is_, toks, next)
         }
         Ok((text, after, k)) => {
-          let is_ = text.map_or(is_, fn(t) { is_.add(t) })
+          let is_ = is_ + text.iter().to_array()
           ((self.make_col(is_), (blanks_before, after)), toks1, k)
         }
       }
@@ -1579,7 +1597,7 @@ fn Parser::parse_cols(
       match self.start_col(line, before=start, k) {
         Col(col, k) => self.parse_cols(line, acc.add(col), toks1, k)
         Start(before, is_) => {
-          let is_ = is_.add(inline)
+          let is_ = is_ + [inline]
           let (col, toks, k) = self.finish_col(line, before, is_, toks, next)
           self.parse_cols(line, acc.add(col), toks, k)
         }
