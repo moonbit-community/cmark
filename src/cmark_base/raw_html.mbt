@@ -255,9 +255,7 @@ fn processing_instruction[A](
   loop lines, line, start, start + 2 {
     lines, line, start, k => {
       if k > line.last {
-        guard let Some((lines, new_line)) = next_line(lines) else {
-          _ => break None
-        }
+        guard let Some(new_line) = next_line(lines) else { _ => break None }
         push_span(line~, start, line.last, acc)
         let start = first_non_blank_in_span(s, new_line)
         continue lines, new_line, start, start
@@ -298,9 +296,7 @@ fn html_comment[A](
   loop lines, line, start, start + 4 {
     lines, line, start, k => {
       if k > line.last {
-        guard let Some((lines, new_line)) = next_line(lines) else {
-          _ => break None
-        }
+        guard let Some(new_line) = next_line(lines) else { _ => break None }
         push_span(line~, start, line.last, acc)
         let start = first_non_blank_in_span(s, new_line)
         continue lines, new_line, start, start
@@ -340,9 +336,7 @@ fn cdata_section[A](
   loop lines, line, start, start + 9 {
     lines, line, start, k => {
       if k > line.last {
-        guard let Some((lines, new_line)) = next_line(lines) else {
-          _ => break None
-        }
+        guard let Some(new_line) = next_line(lines) else { _ => break None }
         push_span(line~, start, line.last, acc)
         let start = first_non_blank_in_span(s, new_line)
         continue lines, new_line, start, start

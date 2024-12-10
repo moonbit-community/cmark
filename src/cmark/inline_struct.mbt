@@ -225,12 +225,22 @@ fn tokens_pop_until(start~ : Int, rev_toks : RevTokens) -> Unit {
 }
 
 ///|
-fn tokens_next_line(rev_toks : RevTokensView) -> (RevTokensView, LineSpan)? {
-  loop rev_toks {
-    [] => None
-    [.. as rev_toks, Newline({ newline, .. })] =>
-      return Some((rev_toks, newline))
-    [.. as rev_toks, _] => continue rev_toks
+fn tokens_next_line(rev_toks : RevTokens) -> LineSpan? {
+  let acc = []
+  loop rev_toks.pop() {
+    None =>
+      loop acc.pop() {
+        None => None
+        Some(t) => {
+          rev_toks.push(t)
+          continue acc.pop()
+        }
+      }
+    Some(Newline({ newline, .. })) => Some(newline)
+    Some(t) => {
+      acc.push(t)
+      continue rev_toks.pop()
+    }
   }
 }
 
@@ -726,7 +736,7 @@ fn Parser::try_autolink_or_html(
   guard let Some((rev_toks_, last_line, spans, last)) = @cmark_base.raw_html(
     next_line=tokens_next_line,
     self.i,
-    rev_toks.val[:],
+    rev_toks.val,
     line~,
     start~,
   ) else {
@@ -768,7 +778,7 @@ fn Parser::try_full_reflink_remainder(
     self.buf,
     next_line=tokens_next_line,
     self.i,
-    rev_toks.val[:],
+    rev_toks.val,
     line~,
     start~,
   ) else {
@@ -797,7 +807,7 @@ fn Parser::try_shortcut_reflink(
     self.buf,
     next_line=tokens_next_line,
     self.i,
-    rev_toks.val[:],
+    rev_toks.val,
     line~,
     start~,
   ) else {
@@ -824,7 +834,7 @@ fn Parser::try_collapsed_reflink(
     self.buf,
     next_line=tokens_next_line,
     self.i,
-    rev_toks.val[:],
+    rev_toks.val,
     line~,
     start~,
   ) else {
@@ -853,7 +863,7 @@ fn Parser::try_inline_link_remainder(
   guard self.cidx.has_right_paren(after=st) else { None }
   guard let Some((rev_toks_, line, before_dest, start)) = self.first_non_blank_over_nl(
     next_line=tokens_next_line,
-    rev_toks.val[:],
+    rev_toks.val,
     start_line,
     start=st + 1,
   ) else {
