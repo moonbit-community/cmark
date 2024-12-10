@@ -157,7 +157,7 @@ test "folder block with footnote definition" {
         label: {
           meta: @rami3l/cmark/cmark_base.Meta::none(),
           key: "1",
-          text: @immut/list.of([]),
+          text: [],
         },
         defined_label: None,
         block: Block::empty(),
