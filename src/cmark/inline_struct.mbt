@@ -1296,7 +1296,7 @@ fn Parser::try_emphasis(
   let emph = {
     let last = if start_line == line { text_last } else { start_line.last }
     let text_start = { ..start_line, first: text_first, last }
-    let emph_toks = self.second_pass(emph_toks[:], text_start)
+    let emph_toks = self.second_pass(emph_toks, text_start)
     let text = self.last_pass(emph_toks[:], text_start)
     self.inlines_inline(first~, last=text_last, first_line~, last_line~, text)
   }
@@ -1381,7 +1381,7 @@ fn Parser::try_strikethrough(
       let last = if start_line == line { last } else { start_line.last }
       { ..start_line, first, last }
     }
-    let emph_toks = self.second_pass(stricken_toks[:], text_start)
+    let emph_toks = self.second_pass(stricken_toks, text_start)
     let text = self.last_pass(emph_toks[:], text_start)
     self.inlines_inline(first~, last~, first_line~, last_line~, text)
   }
@@ -1400,10 +1400,11 @@ fn Parser::try_strikethrough(
 ///|
 fn Parser::second_pass(
   self : Parser,
-  toks : ArrayView[Token],
+  /// consuming
+  toks : Array[Token],
   line : LineSpan
 ) -> Array[Token] {
-  let rev_toks = Ref::new(toks.iter().to_array()..rev_inplace())
+  let rev_toks = Ref::new(toks..rev_inplace())
   let acc = []
   let mut line = line
   while true {
@@ -1476,7 +1477,7 @@ fn Parser::parse_tokens(
   first_line : LineSpan
 ) -> (Array[Inline], Bool) {
   let (toks, had_link) = self.first_pass(toks[:], first_line)
-  let toks = self.second_pass(toks[:], first_line)
+  let toks = self.second_pass(toks, first_line)
   let inlines = self.last_pass(toks[:], first_line)
   (inlines, had_link)
 }
@@ -1700,7 +1701,7 @@ fn Parser::parse_table_row(
   )
   self.cidx = cidx
   let (toks, _had_link) = self.first_pass(toks.to_array()[:], first_line)
-  let toks = self.second_pass(toks[:], first_line)
+  let toks = self.second_pass(toks, first_line)
   // We now have modified last pass, inner inlines will have gone through
   // the regular `last_pass` which is fine since we are only interested
   // in creating the toplevel text nodes further splited on (unescaped) `\`.
