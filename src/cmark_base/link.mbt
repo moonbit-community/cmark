@@ -92,32 +92,28 @@ pub fn link_title[A](
     '(' => {
       let start = start + 1
       loop next_line, s, lines, line, false, start, List::Nil, start {
-        next_line, s, lines, line, prev_bslash, start, acc, k =>
+        next_line, s, lines, line, prev_bslash, start, acc, k => {
           if k > line.last {
             guard let Some((lines, newline)) = next_line(lines) else {
               _ => break None
             }
-            if newline.first > newline.last {
-              break None
-            }
+            guard newline.first <= newline.last else { break None }
             let acc = push_span(line~, start, line.last, acc)
             let start = first_non_blank_in_span(s, newline)
             let prev_bslash = false
             continue next_line, s, lines, newline, prev_bslash, start, acc, start
-          } else {
-            if prev_bslash.not() {
-              if s[k] == '(' {
-                break None
-              }
-              if s[k] == ')' {
-                break Some(
-                  (lines, line, push_span(line~, start, k - 1, acc), k),
-                )
-              }
-            }
-            let prev_bslash = s[k] == '\\' && prev_bslash.not()
-            continue next_line, s, lines, line, prev_bslash, start, acc, k + 1
           }
+          if prev_bslash.not() {
+            if s[k] == '(' {
+              break None
+            }
+            if s[k] == ')' {
+              break Some((lines, line, push_span(line~, start, k - 1, acc), k))
+            }
+          }
+          let prev_bslash = s[k] == '\\' && prev_bslash.not()
+          continue next_line, s, lines, line, prev_bslash, start, acc, k + 1
+        }
       }
     }
     _ => None
@@ -153,7 +149,7 @@ pub fn link_label[A](
         }
         let acc = push_span(line~, start, line.last, acc)
         let start = first_non_blank_in_span(s, newline)
-        if b.is_empty().not() {
+        if b.to_string().is_empty().not() { // TODO: Use StringBuilder::is_empty()
           b.write_char(' ')
         }
         let prev = '\x00'
@@ -179,7 +175,7 @@ pub fn link_label[A](
         }
         (']', '\\') => ()
         (']', _) => {
-          let key = b.to_unchecked_string()
+          let key = b.to_string()
           if key.iter().all(@char.is_ascii_whitespace) {
             break None
           }
@@ -202,7 +198,7 @@ pub fn link_label[A](
         _ => ()
       }
       // Collapse non initial whitespace
-      if @char.is_ascii_blank(prev) && b.is_empty().not() {
+      if @char.is_ascii_blank(prev) && b.to_string().is_empty().not() { // TODO: Use StringBuilder::is_empty()
         b.write_char(' ')
       }
       let mut u = @char.at(s, k)

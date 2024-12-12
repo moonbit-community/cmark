@@ -1519,7 +1519,7 @@ fn Parser::start_col(
 enum StartColResult {
   Col((Inline, TableCellLayout), BytePos)
   Start(String, List[Inline])
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///|
 fn Parser::finish_col(

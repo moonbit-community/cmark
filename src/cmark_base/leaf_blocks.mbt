@@ -81,13 +81,11 @@ pub fn LineType::atx_heading(
   start~ : BytePos
 ) -> LineType {
   fn skip_hashes(s : String, last, k) {
-    if k > last {
-      return k
+    for k = k; k <= last && s[k] == '#'; k = k + 1 {
+
+    } else {
+      k
     }
-    if s[k] == '#' {
-      return skip_hashes(s, last, k + 1)
-    }
-    k
   }
 
   fn find_end(s : String, last, k) { // Blank on k, last + 1 if blank* [#+] blank*
@@ -105,17 +103,15 @@ pub fn LineType::atx_heading(
   }
 
   fn content(s : String, last, k) {
-    if k > last {
-      return k - 1
+    loop s, last, k {
+      s, last, k => {
+        guard k <= last else { k - 1 }
+        guard s[k] == ' ' || s[k] == '\t' else { continue s, last, k + 1 }
+        let end1 = find_end(s, last, k)
+        guard end1 <= last else { k - 1 }
+        continue s, last, end1
+      }
     }
-    if " \t".contains_char(s[k]).not() {
-      return content(s, last, k + 1)
-    }
-    let end1 = find_end(s, last, k)
-    if end1 > last {
-      return k - 1
-    }
-    content(s, last, end1)
   }
 
   fn level(s : String, last, acc, k) {
@@ -169,7 +165,7 @@ pub fn LineType::setext_heading_underline(
     if s[k] == s[start] {
       return underline(s, last, start, k + 1)
     }
-    if " \t".contains_char(s[k]).not() {
+    if s[k] != ' ' && s[k] != '\t' {
       return Nomatch
     }
     let end_blank = first_non_blank(s, last~, start=k + 1)
@@ -182,7 +178,7 @@ pub fn LineType::setext_heading_underline(
   if start > last {
     return Nomatch
   }
-  if "-=".contains_char(s[start]).not() {
+  if s[start] != '-' && s[start] != '=' {
     return Nomatch
   }
   underline(s, last, start, start + 1)
@@ -201,7 +197,7 @@ pub fn LineType::fenced_code_block_start(
     if nobt && s[k] == '`' {
       raise Exit
     }
-    if " \t".contains_char(s[k]).not() {
+    if s[k] != ' ' && s[k] != '\t' {
       return info!(s, last, nobt, info_first, k + 1)
     }
     let after_blank = first_non_blank(s, last~, start=k)
@@ -212,23 +208,27 @@ pub fn LineType::fenced_code_block_start(
   }
 
   fn fence(s : String, last, fence_first, k) -> _!Exit {
-    if k <= last && s[k] == s[fence_first] {
-      return fence!(s, last, fence_first, k + 1)
-    }
-    let fence_last = k - 1
-    let fcount = fence_last - fence_first + 1
-    if fcount < 3 {
-      return Nomatch
-    }
-    let info = {
-      let after_blank = first_non_blank(s, last~, start=k)
-      if after_blank > last {
-        None
-      } else {
-        info!(s, last, s[fence_first] == '`', after_blank, after_blank)
+    loop s, last, fence_first, k {
+      s, last, fence_first, k => {
+        if k <= last && s[k] == s[fence_first] {
+          continue s, last, fence_first, k + 1
+        }
+        let fence_last = k - 1
+        let fcount = fence_last - fence_first + 1
+        if fcount < 3 {
+          return Nomatch
+        }
+        let info = {
+          let after_blank = first_non_blank(s, last~, start=k)
+          if after_blank > last {
+            None
+          } else {
+            info!(s, last, s[fence_first] == '`', after_blank, after_blank)
+          }
+        }
+        FencedCodeBlockLine(fence_first, fence_last, info)
       }
     }
-    FencedCodeBlockLine(fence_first, fence_last, info)
   }
 
   if start > last {
@@ -242,7 +242,7 @@ pub fn LineType::fenced_code_block_start(
       if k - first + 1 < 4 && s[k] == ' ' {
         continue s, first, last, k + 1
       }
-      if "~`".contains_char(s[k]).not() {
+      if s[k] != '~' && s[k] != '`' {
         break Nomatch
       }
       try {
@@ -275,18 +275,18 @@ pub fn FencedCodeBlockContinue::new(
   }
   let (fc, fcount) = fence
   fn fence(s : String, last, fence_first, k) -> _!Exit {
-    if k <= last && s[k] == fc {
-      return fence!(s, last, fence_first, k + 1)
+    loop s, last, fence_first, k {
+      s, last, fence_first, k => {
+        if k <= last && s[k] == fc {
+          continue s, last, fence_first, k + 1
+        }
+        let fence_last = k - 1
+        guard fence_last - fence_first + 1 >= fcount else { raise Exit } // Not closing
+        let after_blank = first_non_blank(s, last~, start=k)
+        guard after_blank > last else { raise Exit }
+        Close(fence_first, fence_last)
+      }
     }
-    let fence_last = k - 1
-    if fence_last - fence_first + 1 < fcount {
-      raise Exit // Not closing
-    }
-    let after_blank = first_non_blank(s, last~, start=k)
-    if after_blank > last {
-      return Close(fence_first, fence_last)
-    }
-    raise Exit
   }
 
   loop s, start, last, start {
@@ -445,7 +445,7 @@ pub fn LineType::html_block_start(
       let tag = s.substring(start=tag_first, end=tag_last + 1).to_lower()
       let is_open_end = {
         let n = tag_last + 1
-        n > last || " \t>".contains_char(s[n])
+        n > last || s[n] == ' ' || s[n] == '\t' || s[n] == '>'
       }
       let is_open_close_end = is_open_end ||
         (
@@ -478,12 +478,8 @@ fn LineType::html_block_end_cond_1(
   let lower_s = s.to_lower()
   loop last, start {
     last, k => {
-      if k + 3 > last {
-        break false
-      }
-      if s[k] != '<' || s[k + 1] != '/' {
-        continue last, k + 1
-      }
+      guard k + 3 <= last else { break false }
+      guard s[k] == '<' && s[k + 1] == '/' else { continue last, k + 1 }
       let next = k + 2
       let is_end_tag = {
         let lower_s_sub = lower_s.substring(start=next)
@@ -499,9 +495,7 @@ fn LineType::html_block_end_cond_1(
           _ => false
         }
       }
-      if is_end_tag {
-        break true
-      }
+      guard is_end_tag.not() else { break true }
       continue last, k + 1
     }
   }

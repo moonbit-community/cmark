@@ -3,35 +3,34 @@ struct State {
   safe : Bool
   backend_blocks : Bool
   ids : StringSet
-  footnote_count : Int
+  mut footnote_count : Int
   footnotes : LabelMap[HtmlRenderFootnote]
-} derive(Show, ToJson, FromJson)
+} derive(Show)
 
 ///|
 struct HtmlRenderFootnote {
   text : String
   id : String
-  count : Int
+  mut count : Int
   footnote : @cmark.Footnote
-} derive(Show, ToJson, FromJson)
-
-// We use `sorted_map.T` to serialize to JSON objects instead of arrays.
-///|
-typealias StringSet = @immut/sorted_map.T[String, Unit]
+} derive(Show, ToJson)
 
 ///|
-let state = "CmarkHtmlRendererState"
+pub(all) type! EState State
+
+///|
+typealias StringSet = Set[String]
 
 ///|
 pub fn safe(c : Context) -> Bool {
-  guard let Some({ "safe": True | False as b }) = c.state[state]
-  b == True
+  guard let Some(EState({ safe, .. })) = c.state
+  safe
 }
 
 ///|
 fn backend_blocks(c : Context) -> Bool {
-  guard let Some({ "backend_blocks": True | False as b }) = c.state[state]
-  b == True
+  guard let Some(EState({ backend_blocks, .. })) = c.state
+  backend_blocks
 }
 
 ///|
@@ -44,23 +43,23 @@ fn init_context(
   let st = {
     safe,
     backend_blocks,
-    ids: StringSet::empty(),
+    ids: StringSet::new(),
     footnote_count: 0,
-    footnotes: LabelMap::empty(),
+    footnotes: LabelMap::new(),
   }
-  c.state[state] = st.to_json()
+  c.state = Some(EState(st))
 }
 
 ///|
 fn uid(c : Context, id : String) -> String {
-  guard let Some(Object({ "ids": Object(ids) })) = c.state[state]
+  guard let Some(EState({ ids, .. })) = c.state
   loop ids, id, 0 {
     ids, id, c => {
       let id1 = if c == 0 { id } else { "\{id}-\{c}" }
       if ids.contains(id1) {
         continue ids, id, c + 1
       }
-      ids[id1] = Null
+      ids.add(id1)
       id1
     }
   }
@@ -92,30 +91,19 @@ fn make_footnote_ref_ids(
   label : String,
   f : @cmark.Footnote
 ) -> (String, String, String) {
-  guard let Some(
-    Object(
-      {
-        "footnotes": Object(footnotes),
-        "footnote_count": Number(footnote_count),
-      } as st
-    )
-  ) = c.state[state]
-  guard let Some(
-    Object(
-      { "text": String(text), "id": String(id), "count": Number(refc) } as rf
-    )
-  ) = footnotes[label] else {
+  guard let Some(EState({ footnotes, footnote_count, .. } as st)) = c.state
+  guard let Some({ text, id, count: refc, .. } as rf) = footnotes[label] else {
     None => {
       let footnote_count = footnote_count + 1
-      st["footnote_count"] = Number(footnote_count)
+      st.footnote_count = footnote_count
       let text = "[\{footnote_count}]"
       let id = footnote_id(label)
-      footnotes[label] = { text, id, count: 1, footnote: f }.to_json()
+      footnotes[label] = { text, id, count: 1, footnote: f }
       (text, id, footnote_ref_id(id, 1))
     }
   }
-  let refc = refc.to_int() + 1
-  rf["count"] = Number(refc.to_double())
+  let refc = refc + 1
+  rf.count = refc
   (text, id, footnote_ref_id(id, refc))
 }
 
@@ -200,8 +188,8 @@ pub fn html_escaped_string(c : Context, s : String) -> Unit {
 
 ///|
 pub fn buffer_add_pct_encoded_string(b : Buffer, s : String) -> Unit { // Percent encoded + HTML escaped
-  let unsafe_hexdigit = fn(i : Int) -> Byte {
-    (if i < 10 { i + 0x30 } else { i + 0x37 }).to_byte()
+  let unsafe_hexdigit = fn(i : Int) {
+    Char::from_int(if i < 10 { i + 0x30 } else { i + 0x37 })
   }
   let flush = fn(b : Buffer, max : Int, start : Int, i : Int) -> Unit {
     if start <= max {
@@ -216,10 +204,25 @@ pub fn buffer_add_pct_encoded_string(b : Buffer, s : String) -> Unit { // Percen
       }
       let next = i + 1
       let c = s[i]
-      if @char.is_ascii_alphanum(c) ||
-        #|-._~!$()*+,;=:/?#@
-        .contains_char(c) {
-        continue b, s, max, start, next
+      match c {
+        '-'
+        | '.'
+        | '_'
+        | '~'
+        | '!'
+        | '$'
+        | '('
+        | ')'
+        | '*'
+        | '+'
+        | ','
+        | ';'
+        | '='
+        | ':'
+        | '/'
+        | '?'
+        | '@' => continue b, s, max, start, next
+        _ => if @char.is_ascii_alphanum(c) { continue b, s, max, start, next }
       }
       if c == '&' {
         flush(b, max, start, i)
@@ -235,8 +238,8 @@ pub fn buffer_add_pct_encoded_string(b : Buffer, s : String) -> Unit { // Percen
       let hi = (c.to_int() >> 4) & 0xF
       let lo = c.to_int() & 0xF
       b.write_char('%')
-      b.write_byte(unsafe_hexdigit(hi))
-      b.write_byte(unsafe_hexdigit(lo))
+      b.write_char(unsafe_hexdigit(hi))
+      b.write_char(unsafe_hexdigit(lo))
       continue b, s, max, next, next
     }
   }
@@ -841,20 +844,18 @@ fn xhtml_inline!(c : Context, i : @cmark.Inline) -> Bool {
 // Document rendering
 
 ///|
-fn footnotes!(c : Context, fs : Map[String, Json]) -> Unit {
+fn footnotes!(c : Context, fs : LabelMap[HtmlRenderFootnote]) -> Unit {
   let fs = fs.values().to_array()
-  fs.sort_by_key(
-    fn(f) { f.as_object().unwrap()["id"].unwrap().as_string().unwrap() },
-  )
+  fs.sort_by_key(fn(f) { f.id })
   c.b.write_string("<section role=\"doc-endnotes\"><ol>\n")
   for f in fs {
-    let { id, footnote, .. } : HtmlRenderFootnote = @json.from_json!(f)
+    let { id, footnote, .. } = f
     c.b.write_string("<li id=\"")
     html_escaped_string(c, id)
     c.b.write_string("\">\n")
     c.block!(footnote.block)
     c.b.write_string("<span>")
-    let { count: refc, .. } : HtmlRenderFootnote = @json.from_json!(f)
+    let { count: refc, .. } = f
     for r in 1..=refc {
       c.b.write_string("<a href=\"#")
       pct_encoded_string(c, footnote_ref_id(id, r))
@@ -875,9 +876,9 @@ fn footnotes!(c : Context, fs : Map[String, Json]) -> Unit {
 ///|
 fn doc!(c : Context, d : Doc) -> Bool {
   let _ = c.block!(d.block)
-  match c.state[state] {
+  match c.state {
     Some(fs) => {
-      guard let { "footnotes": Object(fs) } = fs
+      guard let EState({ footnotes: fs, .. }) = fs
       if fs.is_empty().not() {
         footnotes!(c, fs)
       }

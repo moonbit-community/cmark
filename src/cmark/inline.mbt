@@ -15,7 +15,7 @@ pub(all) enum Inline {
   Text(Node[InlineText])
   ExtStrikethrough(Node[InlineStrikethrough])
   ExtMathSpan(Node[InlineMathSpan])
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn Inline::empty() -> Inline {
@@ -154,14 +154,14 @@ pub fn Inline::id(
     |> String::concat(separator="\n")
   // Collapses non initial white 
   let collapse_blanks = fn(prev) {
-    if @char.is_ascii_blank(prev) && buf.is_empty().not() {
+    if @char.is_ascii_blank(prev) && buf.to_string().is_empty().not() { // TODO: Replace with StringBuilder::is_empty()
       buf.write_char('-')
     }
   }
   loop buf, s, s.length() - 1, '\x00', 0 {
     b, s, max, prev, k => {
       if k > max {
-        break buf.to_unchecked_string()
+        break buf.to_string()
       }
       match s[k] {
         ' ' | '\t' as prev_byte => continue b, s, max, prev_byte, k + 1
@@ -198,7 +198,7 @@ pub(all) struct InlineAutolink {
   /// https://spec.commonmark.org/0.30/#absolute-uri
   /// https://spec.commonmark.org/0.30/#email-address
   link : StringNode
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn InlineAutolink::new(link : StringNode) -> InlineAutolink {
@@ -211,7 +211,7 @@ pub(all) struct InlineBreak {
   layout_before : BlanksNode
   ty : InlineBreakType
   layout_after : BlanksNode
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn InlineBreak::new(
@@ -232,7 +232,7 @@ pub(all) enum InlineBreakType {
 pub(all) struct InlineCodeSpan {
   backticks : Count
   code_layout : List[Tight]
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn InlineCodeSpan::new(
@@ -319,7 +319,7 @@ pub fn InlineCodeSpan::code(self : InlineCodeSpan) -> String {
 pub(all) struct InlineEmphasis {
   delim : Char
   inline : Inline
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn InlineEmphasis::new(
@@ -333,7 +333,7 @@ pub fn InlineEmphasis::new(
 pub(all) struct InlineLink {
   text : Inline
   reference : ReferenceKind
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub(all) enum ReferenceKind {
@@ -342,7 +342,7 @@ pub(all) enum ReferenceKind {
   /// https://spec.commonmark.org/0.30/#reference-link
   /// First label is the label of the reference, second label is the label of the referenced definition.
   Ref(ReferenceLayout, Label, Label)
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 // The type for reference link layouts.
 ///|
@@ -411,7 +411,7 @@ pub fn InlineLink::is_unsafe(l : String) -> Bool {
 }
 
 ///| The type for [inline raw HTML](https://spec.commonmark.org/0.30/#raw-html) (can span multiple lines).
-pub(all) type InlineRawHtml List[Tight] derive(Eq, Show, FromJson, ToJson)
+pub(all) type InlineRawHtml List[Tight] derive(Eq, Show, ToJson)
 
 ///| The type for [textual content](https://spec.commonmark.org/0.30/#textual-content).
 ///
@@ -423,13 +423,13 @@ pub(all) typealias InlineText = String
 // Extensions
 
 ///|
-pub(all) type InlineStrikethrough Inline derive(Eq, Show, FromJson, ToJson)
+pub(all) type InlineStrikethrough Inline derive(Eq, Show, ToJson)
 
 ///|
 pub(all) struct InlineMathSpan {
   display : Bool
   tex_layout : List[Tight]
-} derive(Eq, Show, FromJson, ToJson)
+} derive(Eq, Show, ToJson)
 
 ///|
 pub fn tex(self : InlineMathSpan) -> String {

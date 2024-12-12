@@ -9,7 +9,7 @@ pub(all) struct Label {
   meta : Meta
   key : LabelKey
   text : List[Tight]
-} derive(Show, FromJson, ToJson)
+} derive(Show, ToJson)
 
 ///| The type for label keys. These are
 /// [link labels](https://spec.commonmark.org/0.30/#link-label)
@@ -17,7 +17,7 @@ pub(all) struct Label {
 pub(all) typealias LabelKey = String
 
 ///|
-pub(all) typealias LabelMap[V] = @immut/sorted_map.T[LabelKey, V]
+pub(all) typealias LabelMap[V] = Map[LabelKey, V]
 
 ///|
 pub fn Label::new(
