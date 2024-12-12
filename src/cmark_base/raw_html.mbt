@@ -17,11 +17,11 @@ fn attribute_name(
   start~ : Int = 0
 ) -> Next? {
   fn char_is_start(c : Char) -> Bool {
-    @char.is_ascii_alpha(c) || "_:".contains_char(c)
+    @char.is_ascii_alpha(c) || c == '_' || c == ':'
   }
 
   fn char_is_cont(c : Char) -> Bool {
-    @char.is_ascii_alphanum(c) || "_.:-".contains_char(c)
+    @char.is_ascii_alphanum(c) || c == '.' || c == '_' || c == ':' || c == '-'
   }
 
   if start > last || char_is_start(s[start]).not() {
@@ -52,12 +52,21 @@ fn attribute_value[A](
   let c = s[start]
   // https://spec.commonmark.org/current/#double-quoted-attribute-value
   // https://spec.commonmark.org/current/#unquoted-attribute-value
-  if "'\"".contains_char(c) {
+  if c == '"' || c == '\'' {
     return accept_to(char=c, next_line~, s, lines, line~, spans, after=start)
   }
   // https://spec.commonmark.org/current/#unquoted-attribute-value
   fn is_cont(c) {
-    " \t\"'=<>`".contains_char(c).not()
+    not(
+      c == ' ' ||
+      c == '\t' ||
+      c == '"' ||
+      c == '\'' ||
+      c == '=' ||
+      c == '<' ||
+      c == '>' ||
+      c == '`',
+    )
   }
 
   loop s, line.last, start + 1 {
