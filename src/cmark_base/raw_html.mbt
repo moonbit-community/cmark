@@ -238,9 +238,9 @@ fn declaration[A](
   start~ : BytePos
 ) -> (LineSpan, Array[Span], BytePos)? {
   let spans = []
-  accept_to(char='>', next_line~, s, lines, line~, spans, after=start).map(
-    fn { (line, k) => (line, spans, k) },
-  )
+  accept_to(char='>', next_line~, s, lines, line~, spans, after=start).map(fn {
+    (line, k) => (line, spans, k)
+  })
 }
 
 ///| https://spec.commonmark.org/current/#processing-instruction

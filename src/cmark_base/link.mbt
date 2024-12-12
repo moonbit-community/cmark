@@ -89,9 +89,9 @@ pub fn link_title[A](
   match s[start] {
     '"' | '\'' as char => {
       let spans = []
-      accept_upto(char~, next_line~, s, lines, line~, spans, after=start).map(
-        fn { (span, last) => (span, spans, last) },
-      )
+      accept_upto(char~, next_line~, s, lines, line~, spans, after=start).map(fn {
+        (span, last) => (span, spans, last)
+      })
     }
     '(' => {
       let start = start + 1

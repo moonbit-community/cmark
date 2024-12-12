@@ -1497,9 +1497,10 @@ fn Parser::strip_paragraph(
     let { first, last: start, .. } = line
     let non_blank = @cmark_base.last_non_blank(self.i, first~, start~)
     let last = { ..line, last: non_blank }
-    let trailing_blanks = self.layout_clean_raw_span1(
-      { ..line, first: non_blank + 1 },
-    )
+    let trailing_blanks = self.layout_clean_raw_span1({
+      ..line,
+      first: non_blank + 1,
+    })
     (last, trailing_blanks)
   }
   let lines = lines.tail().add(last).rev()
@@ -1581,9 +1582,7 @@ fn Parser::find_pipe(
     return Err(text(k, n - 1))
   }
   let nb = @cmark_base.last_non_blank(self.i, first=k, start=n - 1)
-  let after = self.layout_clean_raw_span1(
-    { ..line, first: nb + 1, last: n - 1 },
-  )
+  let after = self.layout_clean_raw_span1({ ..line, first: nb + 1, last: n - 1 })
   let text = if nb < k { None } else { Some(text(k, nb)) }
   Ok((text, after, n + 1))
 }
@@ -1602,12 +1601,10 @@ fn Parser::start_col(
   match self.find_pipe(line, before~, k) {
     Err(text) => Start(bbefore, [text])
     Ok((text, bafter, k)) => {
-      let text = text.or_else(
-        fn() {
-          let l = self.text_loc_of_span({ ..line, first: k, last: k - 1 })
-          Inlines({ v: [], meta: self.meta(l) })
-        },
-      )
+      let text = text.or_else(fn() {
+        let l = self.text_loc_of_span({ ..line, first: k, last: k - 1 })
+        Inlines({ v: [], meta: self.meta(l) })
+      })
       Col((text, (bbefore, bafter)), k)
     }
   }

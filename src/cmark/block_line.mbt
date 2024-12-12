@@ -83,18 +83,17 @@ fn BlockLine::flush_tight(
   }
   // On the first line the blanks are legit 
   if acc.is_empty() {
-    acc.push(
-      { blanks: "", node: { meta, v: s.substring(start~, end=last + 1) } },
-    )
+    acc.push({
+      blanks: "",
+      node: { meta, v: s.substring(start~, end=last + 1) },
+    })
     return
   }
   let nb = @cmark_base.first_non_blank(s, last~, start~)
-  acc.push(
-    {
-      blanks: s.substring(start~, end=nb),
-      node: { meta, v: s.substring(start=nb, end=last + 1) },
-    },
-  )
+  acc.push({
+    blanks: s.substring(start~, end=nb),
+    node: { meta, v: s.substring(start=nb, end=last + 1) },
+  })
 }
 
 ///|

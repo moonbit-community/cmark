@@ -84,9 +84,7 @@ fn push_span(
       }
     _ => ()
   }
-  spans.push(
-    { start: line.first, span: { ..line, first: first1, last: last1 } },
-  )
+  spans.push({ start: line.first, span: { ..line, first: first1, last: last1 } })
 }
 
 ///| Includes final `char` in spans.
