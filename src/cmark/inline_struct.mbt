@@ -152,19 +152,19 @@ fn CloserIndex::has_math_span(
 ///|
 fn make_closer_index(toks : Array[Token]) -> CloserIndex {
   let mut cidx = CloserIndex::new()
-  guard not(toks.is_empty()) else { cidx }
+  let outer_toks = toks
+  let toks : Tokens = Deque::from_array(toks)
+  guard not(toks._.is_empty()) else { cidx }
 
   // TODO: Ideally we need something like `retain_mut`.
   fn rotate() {
-    // guard let Some(t) = toks._.pop_front()
-    let t = toks.remove(0)
+    guard let Some(t) = toks._.pop_front()
     toks.push(t)
   }
 
-  let len = toks.length()
+  let len = toks._.length()
   for _ in 0..<len {
-    // guard let Some(curr) = toks.remove(0) else { _ => break }
-    let curr = toks[0]
+    guard let Some(curr) = toks._.front()
     match curr {
       Backticks({ count, start, .. }) => {
         cidx = cidx.add(Backticks(count), start) // TODO: Consider using mutable collections here
@@ -176,7 +176,7 @@ fn make_closer_index(toks : Array[Token]) -> CloserIndex {
       }
       RightParen({ start, .. }) => {
         cidx = cidx.add(RightParen, start)
-        let _ = toks.remove(0)
+        let _ = toks._.unsafe_pop_front()
 
       }
       // Discard the token since it's not used for parsing
@@ -194,6 +194,10 @@ fn make_closer_index(toks : Array[Token]) -> CloserIndex {
       }
       _ => rotate()
     }
+  }
+  outer_toks.clear()
+  for t in toks._ {
+    outer_toks.push(t)
   }
   cidx
 }
