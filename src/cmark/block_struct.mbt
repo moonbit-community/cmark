@@ -1497,7 +1497,7 @@ fn Parser::block_struct_to_heading(self : Parser, b : Heading) -> Block {
       let meta = self.meta(
         self.text_loc_of_span({ ..heading, first: after_open - level }),
       )
-      let (_, inline) = self.parse_inline([heading])
+      let (_, _, inline) = self.parse_inline([heading])
       let id = if self.heading_auto_ids {
         Some(Auto(inline.id()))
       } else {
@@ -1506,7 +1506,7 @@ fn Parser::block_struct_to_heading(self : Parser, b : Heading) -> Block {
       Heading({ v: { layout, level, inline, id }, meta })
     }
     Setext({ level, heading_lines, underline }) => {
-      let ((leading_indent, trailing_blanks), inline) = self.parse_inline(
+      let (leading_indent, trailing_blanks, inline) = self.parse_inline(
         heading_lines,
       )
       let (underline_indent, u, blanks) = underline
@@ -1552,8 +1552,7 @@ fn Parser::block_struct_to_html_block(
 
 ///|
 fn Parser::block_struct_to_paragraph(self : Parser, par : Paragraph) -> Block {
-  let (layout, inline) = self.parse_inline(par.lines)
-  let (leading_indent, trailing_blanks) = layout
+  let (leading_indent, trailing_blanks, inline) = self.parse_inline(par.lines)
   let meta = inline.meta()
   Paragraph({ v: { leading_indent, inline, trailing_blanks }, meta })
 }

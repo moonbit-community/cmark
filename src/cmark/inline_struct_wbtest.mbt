@@ -3,7 +3,7 @@ fn parse_only(
   txt : String,
   strict~ : Bool = true,
   polish~ : (Parser) -> Parser = fn(p) { p }
-) -> ((Col, String), Inline) {
+) -> (Col, String, Inline) {
   let p = Parser::new(txt, strict~) |> polish()
   let lines = txt.split("\n")
   let mut byte_pos = 0
@@ -40,7 +40,7 @@ fn tokenize_only(
     ln_num += 1
     byte_pos += ln.length() + 1 // considering the trailing '\n'
   }
-  let (_, _, lines) = p.strip_paragraph(lines1)
+  let (_, _, _, lines) = p.strip_paragraph(lines1)
   tokenize(p.i, lines, exts=p.exts)
 }
 
@@ -51,7 +51,8 @@ test "should parse entity and numeric char references" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Text",
         "0": ["  & © Æ Ď ¾ ℋ ⅆ ∲ ≧̸ # Ӓ Ϡ � \" ആ ಫ"],
@@ -64,7 +65,8 @@ test "should parse entity and numeric char references" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Text",
         "0": [
@@ -77,14 +79,16 @@ test "should parse entity and numeric char references" {
 
 test "should parse autolinks" {
   @json.inspect!(parse_only("<http://example.org>"), content=[
-    [0, ""],
+    0,
+    "",
     {
       "$tag": "Autolink",
       "0": [{ "is_email": false, "link": ["http://example.org"] }],
     },
   ])
   @json.inspect!(parse_only("<you@example.org>"), content=[
-    [0, ""],
+    0,
+    "",
     {
       "$tag": "Autolink",
       "0": [{ "is_email": true, "link": ["you@example.org"] }],
@@ -101,7 +105,8 @@ test "should parse breaks" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Inlines",
         "0": [
@@ -152,7 +157,8 @@ test "should parse breaks" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Inlines",
         "0": [
@@ -237,7 +243,8 @@ test "should tokenize codespans" {
 
 test "should parse codespans on a single line" {
   @json.inspect!(parse_only("Wow, we have `code spans` now!"), content=[
-    [0, ""],
+    0,
+    "",
     {
       "$tag": "Inlines",
       "0": [
@@ -267,7 +274,8 @@ test "should parse codespans across multiple lines" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Inlines",
         "0": [
@@ -299,7 +307,8 @@ test "should parse codespans across multiple lines" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Inlines",
         "0": [
@@ -332,7 +341,8 @@ test "should parse codespans across multiple lines" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Inlines",
         "0": [
@@ -374,7 +384,8 @@ test "should parse codespans across multiple lines" {
 
 test "should parse emphases" {
   @json.inspect!(parse_only("*it's just emph*"), content=[
-    [0, ""],
+    0,
+    "",
     {
       "$tag": "Emphasis",
       "0": [
@@ -383,7 +394,8 @@ test "should parse emphases" {
     },
   ])
   @json.inspect!(parse_only("_and another emph_"), content=[
-    [0, ""],
+    0,
+    "",
     {
       "$tag": "Emphasis",
       "0": [
@@ -395,7 +407,8 @@ test "should parse emphases" {
     },
   ])
   @json.inspect!(parse_only("**and strong emph**"), content=[
-    [0, ""],
+    0,
+    "",
     {
       "$tag": "StrongEmphasis",
       "0": [
@@ -404,7 +417,8 @@ test "should parse emphases" {
     },
   ])
   @json.inspect!(parse_only("__and another strong emph__"), content=[
-    [0, ""],
+    0,
+    "",
     {
       "$tag": "StrongEmphasis",
       "0": [
@@ -416,7 +430,8 @@ test "should parse emphases" {
     },
   ])
   @json.inspect!(parse_only("be careful about **embedded * markers**!"), content=[
-    [0, ""],
+    0,
+    "",
     {
       "$tag": "Inlines",
       "0": [
@@ -437,7 +452,8 @@ test "should parse emphases" {
     },
   ])
   @json.inspect!(parse_only("This *is not ** what* you want?"), content=[
-    [0, ""],
+    0,
+    "",
     {
       "$tag": "Inlines",
       "0": [
@@ -466,7 +482,8 @@ test "should parse links/images/refs" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Link",
         "0": [
@@ -499,7 +516,8 @@ test "should parse links/images/refs" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Image",
         "0": [
@@ -532,7 +550,8 @@ test "should parse links/images/refs" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Link",
         "0": [
@@ -566,7 +585,8 @@ test "should parse links/images/refs" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Image",
         "0": [
@@ -602,7 +622,8 @@ test "should parse links/images/refs" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Inlines",
         "0": [
@@ -650,7 +671,8 @@ test "should parse raw HTML" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Inlines",
         "0": [
@@ -671,7 +693,8 @@ test "should parse raw HTML" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Inlines",
         "0": [
@@ -695,7 +718,8 @@ test "should parse raw HTML" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Inlines",
         "0": [
@@ -814,7 +838,8 @@ test "should parse strikethroughs" {
       ,
     ),
     content=[
-      [0, ""],
+      0,
+      "",
       {
         "$tag": "Inlines",
         "0": [
@@ -930,7 +955,8 @@ test "should parse inline math" {
       ,
     ),
     content=[
-      [1, ""],
+      1,
+      "",
       {
         "$tag": "Inlines",
         "0": [

@@ -1476,7 +1476,7 @@ fn Parser::parse_tokens(
 fn Parser::strip_paragraph(
   self : Parser,
   lines : Array[LineSpan]
-) -> ((Col, String), Meta, Array[LineSpan]) {
+) -> (Col, String, Meta, Array[LineSpan]) {
   let (last, trailing_blanks) = {
     guard let Some(line) = lines.pop()
     let { first, last: start, .. } = line
@@ -1497,15 +1497,17 @@ fn Parser::strip_paragraph(
     (first, leading_indent)
   }
   lines[0] = first
-  ((leading_indent, trailing_blanks), self.meta_of_spans(first~, last~), lines)
+  (leading_indent, trailing_blanks, self.meta_of_spans(first~, last~), lines)
 }
 
 ///|
 fn Parser::parse_inline(
   self : Parser,
   lines : Array[LineSpan]
-) -> ((Col, String), Inline) {
-  let (layout, meta, lines) = self.strip_paragraph(lines)
+) -> (Col, String, Inline) {
+  let (leading_indent, trailing_blanks, meta, lines) = self.strip_paragraph(
+    lines,
+  )
   let (cidx, toks, first_line) = tokenize(self.i, lines, exts=self.exts)
   self.cidx = cidx
   let (is_, _) = self.parse_tokens(toks, first_line)
@@ -1513,7 +1515,7 @@ fn Parser::parse_inline(
     [i] => i
     _ => Inlines({ v: is_, meta })
   }
-  (layout, inline)
+  (leading_indent, trailing_blanks, inline)
 }
 
 // Parsing table rows
