@@ -8,16 +8,18 @@ fn main {
       @benchmark.Task::new(
         "spec * 100",
         fn() { @lib.render?(doc100) |> ignore },
-        count=10,
+        count=1,
       ),
     )
-    ..add(
-      @benchmark.Task::new(
-        "spec * 200",
-        fn() { @lib.render?(doc200) |> ignore },
-        count=10,
-      ),
-    )
+    // ..add(
+    //   @benchmark.Task::new(
+    //     "spec * 200",
+    //     fn() { @lib.render?(doc200) |> ignore },
+    //     count=1,
+    //   ),
+    // )
     .run()
-  println(res)
+  for _, v in res {
+    println("\{v}\n\n")
+  }
 }
